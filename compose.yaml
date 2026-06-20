@@ -1,0 +1,19 @@
+services:
+  qa-report:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: qa-report
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-4173}:4173"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4173
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
