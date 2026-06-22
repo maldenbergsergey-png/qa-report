@@ -69,6 +69,7 @@ const elements = {
   addSectionButton: document.querySelector("#addSectionButton"),
   previewButton: document.querySelector("#previewButton"),
   copyButton: document.querySelector("#copyButton"),
+  copyVisualButton: document.querySelector("#copyVisualButton"),
   clearButton: document.querySelector("#clearButton"),
   importButton: document.querySelector("#importButton"),
   previewModal: document.querySelector("#previewModal"),
@@ -76,6 +77,7 @@ const elements = {
   visualPreview: document.querySelector("#visualPreview"),
   markupPreview: document.querySelector("#markupPreview"),
   modalCopyButton: document.querySelector("#modalCopyButton"),
+  modalCopyVisualButton: document.querySelector("#modalCopyVisualButton"),
   importModal: document.querySelector("#importModal"),
   closeImportButton: document.querySelector("#closeImportButton"),
   importMarkup: document.querySelector("#importMarkup"),
@@ -119,6 +121,10 @@ const elements = {
   redoButton: document.querySelector("#redoButton"),
   historyButton: document.querySelector("#historyButton"),
   focusModeButton: document.querySelector("#focusModeButton"),
+  jiraMenuButton: document.querySelector("#jiraMenuButton"),
+  jiraMenu: document.querySelector("#jiraMenu"),
+  copyMenuButton: document.querySelector("#copyMenuButton"),
+  copyMenu: document.querySelector("#copyMenu"),
   focusExitButton: document.querySelector("#focusExitButton"),
   codeButton: document.querySelector("#codeButton"),
   imageButton: document.querySelector("#imageButton"),
@@ -905,7 +911,7 @@ function setStatusClass(select, status) {
 
 function hasRowContent(row) {
   return (
-    Object.values(row.cells).some((value) => htmlToText(value)) ||
+    Object.values(row.cells).some((value) => htmlToText(value) || /<img|<pre/i.test(value)) ||
     row.status !== "НЕ ПРОВЕРЕНО" ||
     Object.keys(row.cells).length === 0
   );
@@ -975,11 +981,12 @@ function htmlToWiki(html) {
       return `{color:${cssColorToHex(color)}}${content}{color}`;
     }
     if (tag === "pre") {
-      const language = node.dataset.language || "text";
-      return `{code:${language}}\n${extractCodeText(node)}\n{code}`;
+      return `{code}\n${extractCodeText(node)}\n{code}`;
     }
     if (tag === "img") {
       const name = node.dataset.jiraName || node.dataset.fileName || node.alt || "image.png";
+      // Ссылка по имени вложения даёт Jira возможность открыть изображение
+      // во встроенном просмотрщике, а параметр thumbnail оставляет его компактным.
       return `!${name}|thumbnail!`;
     }
     if (tag === "figure") return `\n${content}\n`;
@@ -1001,19 +1008,25 @@ function escapeWiki(value) {
 function jiraCell(value) {
   let content = htmlToWiki(value);
   const protectedBlocks = [];
-  content = content.replace(/\{code:[^}]+\}[\s\S]*?\{code\}/gi, (block) => {
+  content = content.replace(/\{code(?::[^}]+)?\}[\s\S]*?\{code\}/gi, (block) => {
     const token = `@@JIRA_PROTECTED_${protectedBlocks.length}@@`;
     protectedBlocks.push(block);
     return token;
   });
   content = content.replace(/![^!\r\n]+!/g, (block) => {
-    const token = `@@JIRA_PROTECTED_${protectedBlocks.length}@@`;
-    // Внутри Jira-таблицы вертикальная черта изображения иначе становится
-    // разделителем следующей ячейки. Jira снимает экранирование перед
-    // обработкой image markup и получает обычный !file.png|thumbnail!.
-    protectedBlocks.push(block.replace(/\|/g, "\\|"));
+    const token = `@@JIRA_IMAGE_${protectedBlocks.length}@@`;
+    // Jira распознаёт служебную вертикальную черту внутри image markup.
+    // Блок временно вынимается, чтобы общий экранировщик ячейки не превратил
+    // её в часть имени файла.
+    protectedBlocks.push(block);
     return token;
   });
+  // Если перед image-макросом оставить Jira-перенос `\\`, Jira перестаёт
+  // распознавать изображение и воспринимает `|thumbnail` как новую ячейку.
+  // Поэтому только на границе текста и изображения используем обычный пробел.
+  content = content
+    .replace(/[ \t]*(?:\r?\n)+[ \t]*(?=@@JIRA_IMAGE_\d+@@)/g, " ")
+    .replace(/(@@JIRA_IMAGE_\d+@@)[ \t]*(?:\r?\n)+[ \t]*/g, "$1 ");
   content = content
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
@@ -1022,7 +1035,7 @@ function jiraCell(value) {
     // и изображение выводится обычным текстом.
     .replace(/(?:\r?\n)+/g, "\\\\");
   content = content.replace(
-    /@@JIRA_PROTECTED_(\d+)@@/g,
+    /@@JIRA_(?:PROTECTED|IMAGE)_(\d+)@@/g,
     (_, index) => protectedBlocks[Number(index)] || "",
   );
   return content.trim() ? content : " ";
@@ -1361,7 +1374,7 @@ function generateVisualPreview() {
   const wrapper = document.createElement("div");
   const overallColor = STATUS_META[draft.overallStatus].jiraColor;
   wrapper.innerHTML = `<h1>Отчёт о тестировании</h1><p><strong>Проверено на ${escapeHtml(draft.environment)}</strong><br><strong style="color:${overallColor}">ТЕСТ — ${escapeHtml(draft.overallStatus)}</strong></p>`;
-  if (htmlToText(draft.intro)) {
+  if (htmlToText(draft.intro) || /<img|<pre/i.test(draft.intro)) {
     const intro = document.createElement("div");
     intro.innerHTML = previewEditorHtml(draft.intro);
     wrapper.append(intro);
@@ -1384,6 +1397,52 @@ function generateVisualPreview() {
     wrapper.append(heading, table);
   });
   return wrapper.innerHTML;
+}
+
+function generatePortableHtml() {
+  const container = document.createElement("div");
+  container.innerHTML = generateVisualPreview();
+  container.style.fontFamily = "Arial, sans-serif";
+  container.style.color = "#172b4d";
+  container.style.background = "#ffffff";
+  container.querySelectorAll("h1").forEach((item) => {
+    item.style.fontSize = "24px";
+    item.style.margin = "0 0 16px";
+  });
+  container.querySelectorAll("h2").forEach((item) => {
+    item.style.fontSize = "19px";
+    item.style.margin = "24px 0 8px";
+  });
+  container.querySelectorAll("table").forEach((table) => {
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+  });
+  container.querySelectorAll("th, td").forEach((cell) => {
+    cell.style.padding = "8px";
+    cell.style.border = "1px solid #c7cdd4";
+    cell.style.verticalAlign = "top";
+    cell.style.textAlign = "left";
+  });
+  container.querySelectorAll("th").forEach((cell) => {
+    cell.style.background = "#f1f2f4";
+    cell.style.fontWeight = "700";
+  });
+  container.querySelectorAll("figure").forEach((figure) => {
+    figure.style.margin = "6px 0";
+  });
+  container.querySelectorAll("img").forEach((image) => {
+    image.style.display = "block";
+    image.style.maxWidth = image.style.width || "320px";
+    image.style.height = "auto";
+  });
+  container.querySelectorAll("pre").forEach((block) => {
+    block.style.padding = "10px";
+    block.style.border = "1px solid #c7cdd4";
+    block.style.borderRadius = "6px";
+    block.style.background = "#f4f5f7";
+    block.style.whiteSpace = "pre-wrap";
+  });
+  return container.outerHTML;
 }
 
 function previewEditorHtml(html) {
@@ -1922,7 +1981,7 @@ function codeSnippetHtml(language, code, width = "") {
 }
 
 async function copyCodeSnippet(block, language, code) {
-  const jiraCode = `{code:${language}}\n${code}\n{code}`;
+  const jiraCode = `{code}\n${code}\n{code}`;
   const html = codeSnippetHtml(language, code, block.style.width || "");
   try {
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
@@ -2170,7 +2229,7 @@ function enableCodeObject(block) {
     draggedCodeBlock = block;
     block.classList.add("code-dragging");
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", `{code:${language}}\n${code}\n{code}`);
+    event.dataTransfer.setData("text/plain", `{code}\n${code}\n{code}`);
     event.dataTransfer.setData("text/html", codeSnippetHtml(language, code, block.style.width || ""));
   });
   block.addEventListener("dragend", () => {
@@ -2236,7 +2295,7 @@ function openCodeEditor(block) {
 }
 
 function setCodeEditorBackgroundInert(inert) {
-  document.querySelectorAll(".topbar, .workspace, #focusExitButton").forEach((element) => {
+  document.querySelectorAll(".topbar, .workspace, #focusExitButton, #feedbackButton").forEach((element) => {
     element.inert = inert;
   });
 }
@@ -2709,18 +2768,46 @@ function startImageResize(event, figure) {
 function collectLocalImages() {
   const images = [];
   const container = document.createElement("div");
+  const usedNumbers = [];
+  const allHtml = [
+    draft.intro,
+    ...draft.sections.flatMap((section) =>
+      section.rows.flatMap((row) => Object.values(row.cells)),
+    ),
+  ];
+  allHtml.forEach((html) => {
+    container.innerHTML = html || "";
+    container.querySelectorAll("img").forEach((image) => {
+      const name = image.dataset.jiraName || image.dataset.fileName || "";
+      const match = name.match(/^screenshot-(\d+)\./i);
+      if (match) usedNumbers.push(Number(match[1]));
+    });
+  });
+  let screenshotNumber = Math.max(0, ...usedNumbers) + 1;
+  const extensionByType = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/gif": "gif",
+    "image/webp": "webp",
+  };
   const collectFromHtml = (html, location) => {
     container.innerHTML = html || "";
     container.querySelectorAll("img[data-attachment-id]").forEach((image) => {
-      if (!image.src.startsWith("data:") || image.dataset.jiraName) return;
+      // Локальный data URL остаётся исходником изображения и после публикации.
+      // Загружаем его заново при каждой отправке: старое вложение пользователь
+      // мог удалить из Jira, а новый комментарий не должен от него зависеть.
+      if (!image.src.startsWith("data:")) return;
       const [, dataBase64 = ""] = image.src.split(",");
+      const type = image.dataset.mimeType || "image/png";
+      const extension = extensionByType[type] || "png";
       images.push({
         attachmentId: image.dataset.attachmentId,
-        name: image.dataset.fileName || `image-${image.dataset.attachmentId}.png`,
-        type: image.dataset.mimeType || "image/png",
+        name: `screenshot-${screenshotNumber}.${extension}`,
+        type,
         dataBase64,
         ...location,
       });
+      screenshotNumber += 1;
     });
   };
   collectFromHtml(draft.intro, { location: "intro" });
@@ -2841,6 +2928,44 @@ async function copyMarkup() {
   showToast("Разметка скопирована — можно вставлять в Jira");
 }
 
+async function copyVisualReport() {
+  if (!draft.sections.some((section) => section.rows.some(hasRowContent))) {
+    showToast("Добавьте хотя бы одну заполненную строку");
+    return;
+  }
+  const html = generatePortableHtml();
+  const textContainer = document.createElement("div");
+  textContainer.innerHTML = html;
+  const plainText = textContainer.innerText;
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+      throw new Error("Расширенный буфер обмена недоступен");
+    }
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([plainText], { type: "text/plain" }),
+      }),
+    ]);
+  } catch {
+    const holder = document.createElement("div");
+    holder.contentEditable = "true";
+    holder.style.position = "fixed";
+    holder.style.left = "-9999px";
+    holder.innerHTML = html;
+    document.body.append(holder);
+    const range = document.createRange();
+    range.selectNodeContents(holder);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.execCommand("copy");
+    selection.removeAllRanges();
+    holder.remove();
+  }
+  showToast("Визуальная таблица скопирована");
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -2862,12 +2987,36 @@ function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (!elements.themeToggle) return;
   const dark = theme === "dark";
-  elements.themeToggle.querySelector(".theme-icon").textContent = dark ? "☀" : "☾";
-  elements.themeToggle.querySelector(".theme-label").textContent = dark ? "Светлая" : "Тёмная";
+  elements.themeToggle.querySelector(".theme-icon use")?.setAttribute(
+    "href",
+    dark ? "#icon-sun" : "#icon-moon",
+  );
   elements.themeToggle.setAttribute(
     "aria-label",
     dark ? "Включить светлую тему" : "Включить тёмную тему",
   );
+  elements.themeToggle.title = dark ? "Включить светлую тему" : "Включить тёмную тему";
+}
+
+function closeHeaderDropdowns(exceptMenu = null) {
+  [
+    [elements.jiraMenuButton, elements.jiraMenu],
+    [elements.copyMenuButton, elements.copyMenu],
+  ].forEach(([button, menu]) => {
+    if (!button || !menu || menu === exceptMenu) return;
+    menu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    button.closest(".header-dropdown")?.classList.remove("open");
+  });
+}
+
+function toggleHeaderDropdown(button, menu) {
+  const willOpen = menu.hidden;
+  closeHeaderDropdowns(menu);
+  menu.hidden = !willOpen;
+  button.setAttribute("aria-expanded", String(willOpen));
+  button.closest(".header-dropdown")?.classList.toggle("open", willOpen);
+  if (willOpen) menu.querySelector("button:not(:disabled)")?.focus();
 }
 
 function askConfirmation(message, options = {}) {
@@ -3271,6 +3420,16 @@ document.addEventListener("drop", (event) => {
   draggedCodeBlock = null;
 });
 
+elements.jiraMenuButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleHeaderDropdown(elements.jiraMenuButton, elements.jiraMenu);
+});
+elements.copyMenuButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleHeaderDropdown(elements.copyMenuButton, elements.copyMenu);
+});
+elements.jiraMenu.addEventListener("click", () => closeHeaderDropdowns());
+elements.copyMenu.addEventListener("click", () => closeHeaderDropdowns());
 elements.previewButton.addEventListener("click", openPreview);
 elements.feedbackButton.addEventListener("click", openFeedback);
 elements.closeFeedbackButton.addEventListener("click", closeFeedback);
@@ -3294,7 +3453,9 @@ elements.feedbackDropzone.addEventListener("drop", async (event) => {
   await addFeedbackFiles(event.dataTransfer.files);
 });
 elements.copyButton.addEventListener("click", copyMarkup);
+elements.copyVisualButton.addEventListener("click", copyVisualReport);
 elements.modalCopyButton.addEventListener("click", copyMarkup);
+elements.modalCopyVisualButton.addEventListener("click", copyVisualReport);
 elements.closePreviewButton.addEventListener("click", closePreview);
 elements.clearButton.addEventListener("click", resetDraft);
 elements.importButton.addEventListener("click", openImport);
@@ -3422,11 +3583,21 @@ document.querySelectorAll(".preview-tab").forEach((tab) => {
   });
 });
 document.addEventListener("click", (event) => {
+  if (!event.target.closest(".header-dropdown")) closeHeaderDropdowns();
   if (!event.target.closest(".floating-context-menu, .row-menu-button, .column-menu-button, .cell-image")) {
     closeFloatingMenu();
   }
 });
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const openedMenu = document.querySelector(".header-dropdown.open");
+  if (!openedMenu) return;
+  const trigger = openedMenu.querySelector(".header-dropdown-trigger");
+  closeHeaderDropdowns();
+  trigger?.focus();
+});
 window.addEventListener("resize", () => {
+  closeHeaderDropdowns();
   closeFloatingMenu();
   if (!elements.linkPopover.hidden) positionLinkPopover();
 });

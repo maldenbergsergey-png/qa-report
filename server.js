@@ -473,8 +473,52 @@ async function handleJiraAttachments(request, response) {
   const files = Array.isArray(body.files) ? body.files : [];
   if (!files.length) return sendJson(response, 200, { ok: true, attachments: [] });
   if (files.length > 20) throw new Error("За один раз можно загрузить не более 20 изображений");
-  const normalizedFiles = files.map(decodeImageFile);
   const version = connection.type === "cloud" ? "3" : "2";
+  const normalizedFiles = files.map(decodeImageFile);
+  const usedNames = new Set();
+  const usedScreenshotNumbers = [];
+  let attachmentListAvailable = false;
+  try {
+    const issue = await jiraFetch(
+      connection,
+      `/rest/api/${version}/issue/${encodeURIComponent(issueKey)}?fields=attachment`,
+    );
+    for (const attachment of issue.fields?.attachment || []) {
+      if (!attachment.filename) continue;
+      const filename = String(attachment.filename).toLowerCase();
+      usedNames.add(filename);
+      const match = filename.match(/^screenshot-(\d+)\.[a-z0-9]+$/i);
+      if (match) usedScreenshotNumbers.push(Number(match[1]));
+    }
+    attachmentListAvailable = true;
+  } catch {
+    // Если у пользователя нет права читать список вложений, загрузка всё равно
+    // продолжится. Имена текущей пачки останутся уникальными между собой.
+  }
+  let screenshotNumber = Math.max(0, ...usedScreenshotNumbers) + 1;
+  const fallbackPrefix = `screenshot-${Date.now()}`;
+  normalizedFiles.forEach((file, index) => {
+    const extension = path.extname(file.name) || ".png";
+    if (!attachmentListAvailable) {
+      file.name = `${fallbackPrefix}-${index + 1}${extension}`;
+      usedNames.add(file.name.toLowerCase());
+      return;
+    }
+    const requestedName = file.name.toLowerCase();
+    const requestedMatch = requestedName.match(/^screenshot-(\d+)\.[a-z0-9]+$/i);
+    let candidate = "";
+    if (requestedMatch && !usedNames.has(requestedName)) {
+      candidate = file.name;
+      screenshotNumber = Math.max(screenshotNumber, Number(requestedMatch[1]) + 1);
+    } else {
+      do {
+        candidate = `screenshot-${screenshotNumber}${extension}`;
+        screenshotNumber += 1;
+      } while (usedNames.has(candidate.toLowerCase()));
+    }
+    file.name = candidate;
+    usedNames.add(candidate.toLowerCase());
+  });
   const results = [];
   for (const file of normalizedFiles) {
     const form = new FormData();
