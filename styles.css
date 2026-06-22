@@ -351,6 +351,10 @@ button {
   transform: translateY(-2px);
 }
 
+body.focus-mode-active .floating-help-button {
+  bottom: 84px;
+}
+
 .button {
   display: inline-flex;
   min-height: 38px;
@@ -1199,7 +1203,10 @@ button {
 }
 
 .floating-context-menu button {
+  display: flex;
   width: 100%;
+  align-items: center;
+  gap: 9px;
   padding: 8px 10px;
   border: 0;
   border-radius: 4px;
@@ -1207,6 +1214,11 @@ button {
   color: var(--ink);
   text-align: left;
   white-space: nowrap;
+}
+
+.floating-context-menu button .ui-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .floating-context-menu button:hover {
@@ -1685,14 +1697,14 @@ button {
 .cell-code-block {
   display: block;
   position: relative;
-  width: fit-content;
+  width: min(100%, 520px);
   min-width: min(280px, 100%);
   max-width: 100%;
   margin: 6px 0;
-  padding: 12px;
-  overflow-x: auto;
+  padding: 42px 14px 14px;
+  overflow: hidden;
   border: 1px solid #d0d7e2;
-  border-radius: 6px;
+  border-radius: 8px;
   background: #f4f5f7;
   color: #172b4d;
   font-family: "SFMono-Regular", Consolas, monospace;
@@ -1700,41 +1712,38 @@ button {
   line-height: 1.5;
   white-space: pre;
   tab-size: 2;
+  cursor: grab;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
 }
 
-.cell-code-block.code-collapsed {
-  box-sizing: border-box;
-  width: min(100%, 280px);
-  min-height: 86px;
-  max-height: 86px;
-  padding: 42px 12px 12px;
+.cell-code-block:hover,
+.cell-code-block:focus,
+.cell-image:hover,
+.cell-image:focus {
+  border-color: color-mix(in srgb, var(--primary) 62%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 12%, transparent);
+  outline: none;
+}
+
+.cell-code-block.code-preview code {
+  display: block;
+  max-height: 9em;
   overflow: hidden;
-  cursor: pointer;
+  white-space: pre;
+  mask-image: linear-gradient(to bottom, #000 75%, transparent 100%);
 }
 
-.cell-code-block.code-collapsed code {
-  display: none;
-}
-
-.cell-code-block.code-collapsed::after {
+.code-preview-meta {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
-  left: 12px;
-  overflow: hidden;
-  color: var(--muted);
-  content: "Фрагмент кода";
-  font-family: inherit;
+  top: 13px;
+  left: 14px;
+  color: #5e6c84;
   font-size: 11px;
+  font-weight: 700;
   white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.cell-code-block.code-expanded {
-  width: max-content;
-  min-width: 100%;
-  max-width: none;
-  overflow: visible;
 }
 
 .cell-code-block.code-selected {
@@ -1758,6 +1767,7 @@ button {
 
 .cell-code-block.code-dragging {
   opacity: 0.42;
+  cursor: grabbing;
 }
 
 .cell-editor.code-drop-target,
@@ -1790,45 +1800,72 @@ button {
   color: #6554c0;
 }
 
-.cell-code-block::before {
-  display: block;
-  margin-bottom: 6px;
-  color: #5e6c84;
-  content: attr(data-language);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.code-controls,
-.image-controls {
+.object-action-panel {
   position: absolute;
-  z-index: 2;
+  z-index: 4;
   top: 8px;
   right: 8px;
   display: flex;
-  gap: 5px;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 5px 14px rgba(9, 30, 66, 0.12);
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  pointer-events: none;
 }
 
-.code-control-button,
-.media-copy-button {
+.cell-code-block:hover .object-action-panel,
+.cell-code-block:focus .object-action-panel,
+.cell-code-block:focus-within .object-action-panel,
+.cell-image:hover .object-action-panel,
+.cell-image:focus .object-action-panel,
+.cell-image:focus-within .object-action-panel {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.object-action-button {
   display: inline-grid;
-  width: 28px;
-  min-height: 24px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   place-items: center;
-  border: 1px solid #b6c2cf;
-  border-radius: 5px;
+  border: 0;
+  border-radius: 6px;
   color: #44546f;
-  background: #ffffff;
+  background: transparent;
   cursor: pointer;
-  font: 700 15px/1 inherit;
 }
 
-.code-control-button:hover,
-.media-copy-button:hover {
-  border-color: var(--primary);
+.object-action-button .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.object-action-button:hover {
   color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.object-action-button:active {
+  transform: translateY(1px);
+}
+
+.object-action-button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.object-action-button.object-action-danger:hover {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
 }
 
 .cell-image {
@@ -1837,19 +1874,13 @@ button {
   width: min(100%, 520px);
   max-width: 100%;
   margin: 5px 0;
-  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: grab;
   user-select: none;
-}
-
-.image-controls {
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.cell-image:hover .image-controls,
-.cell-image.image-selected .image-controls,
-.image-controls:focus-within {
-  opacity: 1;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 .cell-image img {
@@ -1857,9 +1888,14 @@ button {
   width: 100%;
   height: auto;
   max-width: 100%;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 5px;
   object-fit: contain;
+}
+
+.cell-image.image-dragging {
+  opacity: 0.42;
+  cursor: grabbing;
 }
 
 .cell-image[data-align="center"] {
@@ -2513,14 +2549,17 @@ body.resizing-code * {
   background: #101722;
 }
 
-:root[data-theme="dark"] .code-control-button,
-:root[data-theme="dark"] .media-copy-button {
+:root[data-theme="dark"] .object-action-panel {
   border-color: #526581;
-  color: #c7d1e0;
-  background: #243247;
+  background: color-mix(in srgb, #243247 94%, transparent);
 }
 
-:root[data-theme="dark"] .cell-code-block::before {
+:root[data-theme="dark"] .object-action-button {
+  color: #c7d1e0;
+  background: transparent;
+}
+
+:root[data-theme="dark"] .code-preview-meta {
   color: #85b8ff;
 }
 
