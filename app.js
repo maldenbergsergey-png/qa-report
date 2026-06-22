@@ -16,6 +16,11 @@ const STATUS_META = {
     color: "#f18d13",
     jiraColor: "#ff8b00",
   },
+  "ТРЕБУЕТ УТОЧНЕНИЯ": {
+    className: "status-clarification",
+    color: "#9f5f00",
+    jiraColor: "#bf6700",
+  },
 };
 
 const DEFAULT_COLUMNS = [
@@ -83,6 +88,15 @@ const elements = {
   toast: document.querySelector("#toast"),
   blockFormat: document.querySelector("#blockFormat"),
   linkButton: document.querySelector("#linkButton"),
+  linkPopover: document.querySelector("#linkPopover"),
+  linkPopoverTitle: document.querySelector("#linkPopoverTitle"),
+  linkTextInput: document.querySelector("#linkTextInput"),
+  linkUrlInput: document.querySelector("#linkUrlInput"),
+  linkPopoverError: document.querySelector("#linkPopoverError"),
+  closeLinkPopoverButton: document.querySelector("#closeLinkPopoverButton"),
+  removeLinkButton: document.querySelector("#removeLinkButton"),
+  applyLinkButton: document.querySelector("#applyLinkButton"),
+  textColorInput: document.querySelector("#textColorInput"),
   themeToggle: document.querySelector("#themeToggle"),
   jiraSettingsButton: document.querySelector("#jiraSettingsButton"),
   publishButton: document.querySelector("#publishButton"),
@@ -108,7 +122,6 @@ const elements = {
   codeButton: document.querySelector("#codeButton"),
   imageButton: document.querySelector("#imageButton"),
   imageInput: document.querySelector("#imageInput"),
-  appendImportButton: document.querySelector("#appendImportButton"),
   commentImportUrl: document.querySelector("#commentImportUrl"),
   markupImportPane: document.querySelector("#markupImportPane"),
   commentImportPane: document.querySelector("#commentImportPane"),
@@ -120,6 +133,22 @@ const elements = {
   historyList: document.querySelector("#historyList"),
   clearHistoryButton: document.querySelector("#clearHistoryButton"),
   saveHistorySnapshotButton: document.querySelector("#saveHistorySnapshotButton"),
+  mediaViewerModal: document.querySelector("#mediaViewerModal"),
+  mediaViewerImage: document.querySelector("#mediaViewerImage"),
+  closeMediaViewerButton: document.querySelector("#closeMediaViewerButton"),
+  codeEditorModal: document.querySelector("#codeEditorModal"),
+  codeEditorTextarea: document.querySelector("#codeEditorTextarea"),
+  codeEditorLineNumbers: document.querySelector("#codeEditorLineNumbers"),
+  codeEditorLanguage: document.querySelector("#codeEditorLanguage"),
+  codeEditorState: document.querySelector("#codeEditorState"),
+  saveCodeButton: document.querySelector("#saveCodeButton"),
+  closeCodeEditorButton: document.querySelector("#closeCodeEditorButton"),
+  confirmModal: document.querySelector("#confirmModal"),
+  confirmModalTitle: document.querySelector("#confirmModalTitle"),
+  confirmModalMessage: document.querySelector("#confirmModalMessage"),
+  closeConfirmButton: document.querySelector("#closeConfirmButton"),
+  cancelConfirmButton: document.querySelector("#cancelConfirmButton"),
+  acceptConfirmButton: document.querySelector("#acceptConfirmButton"),
 };
 
 let draft = loadDraft();
@@ -139,6 +168,11 @@ let importSource = "markup";
 let pendingImportedDraft = null;
 let dbPromise;
 let draggedCodeBlock = null;
+let editingCodeBlock = null;
+let codeEditorInitialValue = "";
+let linkEditorRange = null;
+let editingLink = null;
+let confirmResolver = null;
 
 applyTheme(localStorage.getItem("qa-report-theme") || "light");
 historyCurrent = serializeDraft();
@@ -699,8 +733,8 @@ function moveColumnTo(section, sourceId, targetId, placeAfter = false) {
   const targetIndex = section.columns.findIndex((column) => column.id === targetId);
   if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
   const [column] = section.columns.splice(sourceIndex, 1);
-  let insertionIndex = targetIndex + (placeAfter ? 1 : 0);
-  if (sourceIndex < insertionIndex) insertionIndex -= 1;
+  const currentTargetIndex = section.columns.findIndex((item) => item.id === targetId);
+  const insertionIndex = currentTargetIndex + (placeAfter ? 1 : 0);
   section.columns.splice(insertionIndex, 0, column);
   renderSections();
   scheduleSave();
@@ -920,6 +954,10 @@ function htmlToWiki(html) {
     if (tag === "u") return `+${content}+`;
     if (tag === "s" || tag === "strike") return `-${content}-`;
     if (tag === "a") return `[${content}|${node.getAttribute("href") || ""}]`;
+    if ((tag === "span" && node.style.color) || (tag === "font" && node.getAttribute("color"))) {
+      const color = node.style.color || node.getAttribute("color");
+      return `{color:${cssColorToHex(color)}}${content}{color}`;
+    }
     if (tag === "pre") {
       const language = node.dataset.language || "text";
       return `{code:${language}}\n${extractCodeText(node)}\n{code}`;
@@ -1013,7 +1051,10 @@ function wikiInlineToHtml(value, attachments = []) {
       return `<figure class="cell-image" contenteditable="false" data-align="left"><img src="${escapeHtml(src)}" alt="" data-attachment-id="${escapeHtml(attachment.id)}" data-file-name="${escapeHtml(filename)}" data-jira-name="${escapeHtml(filename)}" data-jira-id="${escapeHtml(attachment.id)}" data-jira-url="${escapeHtml(attachment.content || "")}"></figure>`;
     })
     .replace(/\[([^\]|]+)\|([^\]]+)\]/g, '<a href="$2">$1</a>')
-    .replace(/\{color:[^}]+\}|\{color\}/g, "")
+    .replace(
+      /\{color:(#[0-9a-f]{3,8})\}([\s\S]*?)\{color\}/gi,
+      '<span style="color:$1">$2</span>',
+    )
     .replace(/\*([^*\n]+)\*/g, "<strong>$1</strong>")
     .replace(/_([^_\n]+)_/g, "<em>$1</em>")
     .replace(/\+([^+\n]+)\+/g, "<u>$1</u>")
@@ -1030,6 +1071,7 @@ function normalizeStatus(value) {
   if (["НА ДОРАБОТКУ", "FAILED", "FAIL"].includes(status)) return "НЕ ОК";
   if (["ПОЧТИ ОК", "ПОЧТИ OK"].includes(status)) return "ПОЧТИ ОК";
   if (status === "ЧАСТИЧНО ПРОВЕРЕНО") return status;
+  if (status === "ТРЕБУЕТ УТОЧНЕНИЯ") return status;
   return "НЕ ПРОВЕРЕНО";
 }
 
@@ -1072,8 +1114,8 @@ function parseJiraMarkup(markup, attachments = []) {
       continue;
     }
     if (/^h1\.\s+/i.test(line)) continue;
-    if (/^h2\.\s+/i.test(line)) {
-      pendingTitle = line.replace(/^h2\.\s+/i, "").trim();
+    if (/^h[23]\.\s+/i.test(line)) {
+      pendingTitle = line.replace(/^h[23]\.\s+/i, "").trim();
       headers = null;
       currentSection = null;
       continue;
@@ -1299,7 +1341,7 @@ function generateVisualPreview() {
   wrapper.innerHTML = `<h1>Отчёт о тестировании</h1><p><strong>Проверено на ${escapeHtml(draft.environment)}</strong><br><strong style="color:${overallColor}">ТЕСТ — ${escapeHtml(draft.overallStatus)}</strong></p>`;
   if (htmlToText(draft.intro)) {
     const intro = document.createElement("div");
-    intro.innerHTML = draft.intro;
+    intro.innerHTML = previewEditorHtml(draft.intro);
     wrapper.append(intro);
   }
   draft.sections.forEach((section) => {
@@ -1313,13 +1355,29 @@ function generateVisualPreview() {
     const tbody = document.createElement("tbody");
     rows.forEach((row, index) => {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${index + 1}.</td>${section.columns.map((column) => `<td>${row.cells[column.id] || ""}</td>`).join("")}<td><strong style="color:${STATUS_META[row.status].jiraColor}">${row.status}</strong></td>`;
+      tr.innerHTML = `<td>${index + 1}.</td>${section.columns.map((column) => `<td>${previewEditorHtml(row.cells[column.id] || "")}</td>`).join("")}<td><strong style="color:${STATUS_META[row.status].jiraColor}">${row.status}</strong></td>`;
       tbody.append(tr);
     });
     table.append(thead, tbody);
     wrapper.append(heading, table);
   });
   return wrapper.innerHTML;
+}
+
+function previewEditorHtml(html) {
+  const container = document.createElement("div");
+  container.innerHTML = html || "";
+  container.querySelectorAll("[data-editor-ui]").forEach((item) => item.remove());
+  container.querySelectorAll(".cell-code-block").forEach((block) => {
+    block.classList.remove("code-selected", "code-dragging", "code-expanded");
+    block.removeAttribute("draggable");
+    block.removeAttribute("tabindex");
+  });
+  container.querySelectorAll(".cell-image").forEach((figure) => {
+    figure.classList.remove("image-selected");
+    figure.removeAttribute("tabindex");
+  });
+  return container.innerHTML;
 }
 
 function adfText(value, marks) {
@@ -1604,15 +1662,21 @@ async function testJiraConnection() {
 }
 
 async function publishToJira() {
+  const publishButtonHtml = elements.publishButton.innerHTML;
   try {
     collectDocumentFields();
     const issue = parseIssueUrl(draft.issueUrl);
     const settings = { ...jiraSettings };
     validateJiraSettings(settings, jiraSecret);
     await checkBackendCompatibility();
-    if (!window.confirm(`Опубликовать отчёт комментарием в задаче ${issue.issueKey}?`)) return;
+    const confirmed = await askConfirmation(
+      `Опубликовать отчёт комментарием в задаче ${issue.issueKey}?`,
+      { title: "Отправка в Jira", confirmText: "Отправить" },
+    );
+    if (!confirmed) return;
     elements.publishButton.disabled = true;
-    elements.publishButton.textContent = "Отправляем…";
+    elements.publishButton.innerHTML =
+      '<span class="primary-action-icon">…</span><span class="primary-action-label">Отправляем…</span>';
     await uploadPendingImages(settings, issue);
     const comment =
       settings.type === "cloud"
@@ -1638,7 +1702,7 @@ async function publishToJira() {
     if (/настро|токен|адрес|ключ/i.test(error.message)) openJiraSettings();
   } finally {
     elements.publishButton.disabled = false;
-    elements.publishButton.textContent = "Отправить в Jira";
+    elements.publishButton.innerHTML = publishButtonHtml;
   }
 }
 
@@ -1733,7 +1797,12 @@ async function renderHistoryList() {
       showToast("Создана копия отчёта");
     });
     const deleteButton = createSmallButton("Удалить", async () => {
-      if (!window.confirm(`Удалить отчёт «${report.title}»?`)) return;
+      const confirmed = await askConfirmation(`Удалить отчёт «${report.title}»?`, {
+        title: "Удаление отчёта",
+        confirmText: "Удалить",
+        danger: true,
+      });
+      if (!confirmed) return;
       await deleteReportRecord(report.id);
       await renderHistoryList();
     }, true);
@@ -1799,6 +1868,16 @@ function cleanEditorHtml(editor) {
   });
   clone.querySelectorAll(".cell-image").forEach((figure) => figure.classList.remove("image-selected"));
   return clone.innerHTML;
+}
+
+function cssColorToHex(color) {
+  if (/^#[0-9a-f]{3,8}$/i.test(color)) return color.toLowerCase();
+  const match = String(color).match(/\d+(?:\.\d+)?/g);
+  if (!match || match.length < 3) return color;
+  return `#${match
+    .slice(0, 3)
+    .map((value) => Math.max(0, Math.min(255, Number(value))).toString(16).padStart(2, "0"))
+    .join("")}`;
 }
 
 async function writeClipboardText(value, successMessage = "Скопировано") {
@@ -1881,6 +1960,30 @@ function highlightCodeBlock(block) {
     await copyCodeSnippet(block, language, code);
   });
 
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.className = "code-control-button code-edit";
+  editButton.textContent = "✎";
+  editButton.title = "Открыть редактор кода";
+  editButton.setAttribute("aria-label", "Редактировать код");
+  editButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openCodeEditor(block);
+  });
+
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "code-control-button code-delete";
+  deleteButton.textContent = "🗑";
+  deleteButton.title = "Удалить фрагмент кода";
+  deleteButton.setAttribute("aria-label", "Удалить фрагмент кода");
+  deleteButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    deleteEditorObject(block, "Фрагмент кода удалён");
+  });
+
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "code-control-button code-toggle";
@@ -1904,7 +2007,7 @@ function highlightCodeBlock(block) {
       restoreColumnAfterCode(block);
     }
   });
-  controls.append(copyButton, toggle);
+  controls.append(copyButton, editButton, toggle, deleteButton);
   block.prepend(controls);
   enableCodeObject(block);
 }
@@ -1984,6 +2087,8 @@ function selectCodeBlock(block) {
   });
   document.querySelectorAll(".cell-image.image-selected").forEach((item) => item.classList.remove("image-selected"));
   block.classList.add("code-selected");
+  block.tabIndex = 0;
+  block.focus({ preventScroll: true });
 }
 
 function commitCodeChange(block) {
@@ -2077,9 +2182,105 @@ function parseCodeFromClipboard(html, plainText) {
 
 function insertCodeSnippet(editor, snippet, range = null) {
   activeEditor = editor;
-  const html = `<p><br></p>${codeSnippetHtml(snippet.language, snippet.code, snippet.width)}<p><br></p>`;
+  const code = formatCode(snippet.code);
+  const detectedLanguage = detectCodeLanguage(code);
+  const language =
+    detectedLanguage !== "text" ? detectedLanguage : String(snippet.language || "text").toLowerCase();
+  const html = `<p><br></p>${codeSnippetHtml(language, code, snippet.width)}<p><br></p>`;
   insertHtmlAtSelection(html, range);
   highlightCodeBlocks(editor);
+}
+
+function deleteEditorObject(object, message) {
+  const editor = object.closest(".cell-editor, .intro-editor");
+  if (object.matches(".cell-code-block.code-expanded")) restoreColumnAfterCode(object);
+  object.remove();
+  editor?.dispatchEvent(new Event("input", { bubbles: true }));
+  showToast(message);
+}
+
+function openCodeEditor(block) {
+  editingCodeBlock = block;
+  codeEditorInitialValue = extractCodeText(block);
+  elements.codeEditorTextarea.value = codeEditorInitialValue;
+  updateCodeEditorLineNumbers();
+  elements.codeEditorLanguage.textContent = (block.dataset.language || detectCodeLanguage(codeEditorInitialValue)).toUpperCase();
+  elements.codeEditorState.textContent = "Изменений нет";
+  elements.saveCodeButton.disabled = true;
+  elements.codeEditorModal.hidden = false;
+  setCodeEditorBackgroundInert(true);
+  document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => elements.codeEditorTextarea.focus());
+}
+
+function setCodeEditorBackgroundInert(inert) {
+  document.querySelectorAll(".topbar, .workspace, #focusExitButton").forEach((element) => {
+    element.inert = inert;
+  });
+}
+
+function updateCodeEditorLineNumbers() {
+  const lineCount = Math.max(1, elements.codeEditorTextarea.value.split("\n").length);
+  elements.codeEditorLineNumbers.textContent = Array.from(
+    { length: lineCount },
+    (_, index) => index + 1,
+  ).join("\n");
+  elements.codeEditorLineNumbers.scrollTop = elements.codeEditorTextarea.scrollTop;
+}
+
+function codeEditorIsDirty() {
+  return (
+    !elements.codeEditorModal.hidden &&
+    Boolean(editingCodeBlock) &&
+    elements.codeEditorTextarea.value !== codeEditorInitialValue
+  );
+}
+
+function saveCodeChanges() {
+  if (!editingCodeBlock?.isConnected) return closeCodeEditor(true);
+  const code = formatCode(elements.codeEditorTextarea.value);
+  const language = detectCodeLanguage(code);
+  editingCodeBlock.dataset.language = language;
+  let codeElement = editingCodeBlock.querySelector(":scope > code");
+  if (!codeElement) {
+    codeElement = document.createElement("code");
+    editingCodeBlock.append(codeElement);
+  }
+  codeElement.textContent = code;
+  codeEditorInitialValue = code;
+  highlightCodeBlock(editingCodeBlock);
+  commitCodeChange(editingCodeBlock);
+  closeCodeEditor(true);
+  showToast("Изменения кода сохранены");
+}
+
+async function closeCodeEditor(force = false) {
+  if (!force && codeEditorIsDirty()) {
+    const confirmed = await askConfirmation(
+      "Изменения кода не сохранены. Закрыть редактор и потерять их?",
+      { title: "Несохранённый код", confirmText: "Закрыть без сохранения", danger: true },
+    );
+    if (!confirmed) return false;
+  }
+  elements.codeEditorModal.hidden = true;
+  setCodeEditorBackgroundInert(false);
+  document.body.style.overflow = "";
+  editingCodeBlock = null;
+  codeEditorInitialValue = "";
+  return true;
+}
+
+function openMediaViewer(image) {
+  elements.mediaViewerImage.src = image.src;
+  elements.mediaViewerImage.alt = image.dataset.fileName || "Вложение";
+  elements.mediaViewerModal.hidden = false;
+  document.body.style.overflow = "hidden";
+}
+
+function closeMediaViewer() {
+  elements.mediaViewerModal.hidden = true;
+  elements.mediaViewerImage.removeAttribute("src");
+  document.body.style.overflow = "";
 }
 
 function detectCodeLanguage(code) {
@@ -2102,6 +2303,50 @@ function detectCodeLanguage(code) {
   return "text";
 }
 
+function formatCode(code) {
+  const source = String(code || "").replace(/\r\n?/g, "\n").replace(/\t/g, "  ").trim();
+  if (!source) return "";
+  try {
+    return JSON.stringify(JSON.parse(source), null, 2);
+  } catch {
+    return source;
+  }
+}
+
+function looksLikeCode(value) {
+  const source = String(value || "").trim();
+  if (!source) return false;
+  if (detectCodeLanguage(source) !== "text") return true;
+  if (!source.includes("\n")) return false;
+  return (
+    /^[\s]*[{\[]/m.test(source) ||
+    /[{}[\]();=>]/.test(source) ||
+    /^(?:\s{2,}|\t)\S/m.test(source)
+  );
+}
+
+function isPlainUrl(value) {
+  return /^(?:https?:\/\/|www\.)[^\s]+$/i.test(String(value || "").trim());
+}
+
+function normalizeLinkUrl(value) {
+  const url = String(value || "").trim();
+  return /^www\./i.test(url) ? `https://${url}` : url;
+}
+
+function linkifyPlainText(value) {
+  const source = String(value || "");
+  const pattern = /(?:https?:\/\/|www\.)[^\s]+/gi;
+  let output = "";
+  let offset = 0;
+  for (const match of source.matchAll(pattern)) {
+    output += escapeHtml(source.slice(offset, match.index));
+    output += `<a href="${escapeHtml(normalizeLinkUrl(match[0]))}" target="_blank" rel="noopener noreferrer">${escapeHtml(match[0])}</a>`;
+    offset = match.index + match[0].length;
+  }
+  return `${output}${escapeHtml(source.slice(offset))}`.replace(/\r?\n/g, "<br>");
+}
+
 function insertCodeBlock() {
   if (!activeEditor?.matches(".cell-editor, .intro-editor")) return;
   const rangeNode = savedEditorRange?.commonAncestorContainer;
@@ -2110,11 +2355,15 @@ function insertCodeBlock() {
       ? savedEditorRange.cloneRange()
       : null;
   const selection = range && !range.collapsed ? range.toString() : "";
-  const code = selection || '{\n  "key": "value"\n}';
+  const code = formatCode(selection);
   const language = detectCodeLanguage(code);
-  const html = `<p><br></p><pre class="cell-code-block" data-language="${language}"><code>${escapeHtml(code)}</code></pre><p><br></p>`;
+  const marker = crypto.randomUUID();
+  const html = `<p><br></p><pre class="cell-code-block" data-new-code="${marker}" data-language="${language}"><code>${escapeHtml(code)}</code></pre><p><br></p>`;
   insertHtmlAtSelection(html, range);
   highlightCodeBlocks(activeEditor);
+  const inserted = activeEditor.querySelector(`pre[data-new-code="${marker}"]`);
+  inserted?.removeAttribute("data-new-code");
+  if (inserted) openCodeEditor(inserted);
 }
 
 function readFileAsDataUrl(file) {
@@ -2187,6 +2436,7 @@ async function copyImageToClipboard(image) {
 
 function enhanceImageControls(root = document) {
   root.querySelectorAll(".cell-image").forEach((figure) => {
+    ensureMediaBoundaries(figure);
     figure.querySelectorAll(":scope > [data-editor-ui]").forEach((item) => item.remove());
     const image = figure.querySelector("img");
     if (!image) return;
@@ -2205,9 +2455,43 @@ function enhanceImageControls(root = document) {
       event.stopPropagation();
       await copyImageToClipboard(image);
     });
-    controls.append(copyButton);
+
+    const viewButton = document.createElement("button");
+    viewButton.type = "button";
+    viewButton.className = "media-copy-button";
+    viewButton.textContent = "⛶";
+    viewButton.title = "Открыть изображение";
+    viewButton.setAttribute("aria-label", "Открыть изображение");
+    viewButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMediaViewer(image);
+    });
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "media-copy-button";
+    deleteButton.textContent = "🗑";
+    deleteButton.title = "Удалить изображение";
+    deleteButton.setAttribute("aria-label", "Удалить изображение");
+    deleteButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteEditorObject(figure, "Изображение удалено");
+    });
+    controls.append(copyButton, viewButton, deleteButton);
     figure.append(controls);
   });
+}
+
+function ensureMediaBoundaries(figure) {
+  const createParagraph = () => {
+    const paragraph = document.createElement("p");
+    paragraph.innerHTML = "<br>";
+    return paragraph;
+  };
+  if (!figure.previousSibling) figure.before(createParagraph());
+  if (!figure.nextSibling) figure.after(createParagraph());
 }
 
 function commitImageChange(figure) {
@@ -2221,6 +2505,8 @@ function selectImage(figure) {
   });
   document.querySelectorAll(".cell-code-block.code-selected").forEach((item) => item.classList.remove("code-selected"));
   figure.classList.add("image-selected");
+  figure.tabIndex = 0;
+  figure.focus({ preventScroll: true });
 }
 
 function setImageAlignment(figure, alignment) {
@@ -2444,8 +2730,44 @@ function applyTheme(theme) {
   );
 }
 
-function resetDraft() {
-  if (!window.confirm("Очистить текущий отчёт и создать новый?")) return;
+function askConfirmation(message, options = {}) {
+  if (confirmResolver) confirmResolver(false);
+  elements.confirmModalTitle.textContent = options.title || "Подтвердите действие";
+  elements.confirmModalMessage.textContent = message;
+  elements.acceptConfirmButton.textContent = options.confirmText || "Подтвердить";
+  elements.acceptConfirmButton.className =
+    `button ${options.danger ? "button-danger" : "button-primary"}`;
+  elements.confirmModal.hidden = false;
+  document.body.style.overflow = "hidden";
+  elements.acceptConfirmButton.focus();
+  return new Promise((resolve) => {
+    confirmResolver = resolve;
+  });
+}
+
+function resolveConfirmation(value) {
+  if (!confirmResolver) return;
+  const resolve = confirmResolver;
+  confirmResolver = null;
+  elements.confirmModal.hidden = true;
+  document.body.style.overflow =
+    elements.codeEditorModal.hidden &&
+    elements.previewModal.hidden &&
+    elements.importModal.hidden &&
+    elements.jiraSettingsModal.hidden &&
+    elements.historyModal.hidden
+      ? ""
+      : "hidden";
+  resolve(value);
+}
+
+async function resetDraft() {
+  const confirmed = await askConfirmation("Очистить текущий отчёт и создать новый?", {
+    title: "Новый отчёт",
+    confirmText: "Создать новый",
+    danger: true,
+  });
+  if (!confirmed) return;
   saveReportSnapshot("before-new").catch(() => {});
   draft = clone(DEFAULT_DRAFT);
   draft.reportId = crypto.randomUUID();
@@ -2492,10 +2814,130 @@ elements.blockFormat.addEventListener("change", () => {
   document.execCommand("formatBlock", false, elements.blockFormat.value);
   activeEditor.focus();
 });
-elements.linkButton.addEventListener("click", () => {
-  const url = window.prompt("Введите адрес ссылки");
-  if (url) document.execCommand("createLink", false, url);
+elements.linkButton.addEventListener("pointerdown", () => {
+  const selection = window.getSelection();
+  if (selection?.rangeCount && activeEditor.contains(selection.anchorNode)) {
+    savedEditorRange = selection.getRangeAt(0).cloneRange();
+  }
+});
+function anchorFromRange(range) {
+  if (!range) return null;
+  const parentAnchor = (node) =>
+    (node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement)?.closest?.("a") || null;
+  return (
+    parentAnchor(range.startContainer) ||
+    parentAnchor(range.endContainer) ||
+    parentAnchor(range.commonAncestorContainer)
+  );
+}
+
+function positionLinkPopover() {
+  const buttonRect = elements.linkButton.getBoundingClientRect();
+  const popoverWidth = Math.min(360, window.innerWidth - 24);
+  const left = Math.max(12, Math.min(buttonRect.left, window.innerWidth - popoverWidth - 12));
+  elements.linkPopover.style.width = `${popoverWidth}px`;
+  elements.linkPopover.style.left = `${left}px`;
+  elements.linkPopover.style.top = `${buttonRect.bottom + 8}px`;
+}
+
+function closeLinkPopover() {
+  elements.linkPopover.hidden = true;
+  elements.linkPopoverError.hidden = true;
+  linkEditorRange = null;
+  editingLink = null;
+}
+
+function openLinkPopover() {
+  linkEditorRange = savedEditorRange?.cloneRange() || null;
+  editingLink = anchorFromRange(linkEditorRange);
+  const selectedText = linkEditorRange?.toString().trim() || "";
+  const selectedUrl = isPlainUrl(selectedText) ? normalizeLinkUrl(selectedText) : "";
+  elements.linkPopoverTitle.textContent = editingLink ? "Изменить ссылку" : "Добавить ссылку";
+  elements.linkTextInput.value = editingLink?.textContent || selectedText || "";
+  elements.linkUrlInput.value = editingLink?.getAttribute("href") || selectedUrl;
+  elements.removeLinkButton.hidden = !editingLink;
+  elements.linkPopoverError.hidden = true;
+  elements.linkPopover.hidden = false;
+  positionLinkPopover();
+  requestAnimationFrame(() =>
+    (elements.linkTextInput.value ? elements.linkUrlInput : elements.linkTextInput).focus(),
+  );
+}
+
+function applyLinkFromPopover() {
+  const title = elements.linkTextInput.value.trim();
+  const url = normalizeLinkUrl(elements.linkUrlInput.value);
+  if (!title) {
+    elements.linkPopoverError.textContent = "Введите текст ссылки";
+    elements.linkPopoverError.hidden = false;
+    return;
+  }
+  if (!/^https?:\/\/\S+$/i.test(url)) {
+    elements.linkPopoverError.textContent =
+      "Введите адрес, начинающийся с www., http:// или https://";
+    elements.linkPopoverError.hidden = false;
+    return;
+  }
+  elements.linkUrlInput.value = url;
+  const range = linkEditorRange?.cloneRange();
+  if (editingLink?.isConnected && range) range.selectNode(editingLink);
+  insertHtmlAtSelection(
+    `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`,
+    range,
+  );
+  closeLinkPopover();
   activeEditor.focus();
+}
+
+function removeEditedLink() {
+  if (!editingLink?.isConnected) return closeLinkPopover();
+  const text = document.createTextNode(editingLink.textContent || "");
+  editingLink.replaceWith(text);
+  activeEditor.dispatchEvent(new Event("input", { bubbles: true }));
+  closeLinkPopover();
+  activeEditor.focus();
+}
+
+elements.linkButton.addEventListener("click", openLinkPopover);
+elements.applyLinkButton.addEventListener("click", applyLinkFromPopover);
+elements.removeLinkButton.addEventListener("click", removeEditedLink);
+elements.closeLinkPopoverButton.addEventListener("click", closeLinkPopover);
+[elements.linkTextInput, elements.linkUrlInput].forEach((input) => {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyLinkFromPopover();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeLinkPopover();
+      activeEditor.focus();
+    }
+  });
+});
+elements.textColorInput.addEventListener("pointerdown", () => {
+  const selection = window.getSelection();
+  if (selection?.rangeCount && activeEditor.contains(selection.anchorNode)) {
+    savedEditorRange = selection.getRangeAt(0).cloneRange();
+  }
+});
+elements.textColorInput.addEventListener("input", () => {
+  const range = savedEditorRange?.cloneRange();
+  activeEditor.focus();
+  if (range && !range.collapsed) {
+    const span = document.createElement("span");
+    span.style.color = elements.textColorInput.value;
+    span.append(range.extractContents());
+    range.insertNode(span);
+    range.selectNodeContents(span);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    savedEditorRange = range.cloneRange();
+  } else {
+    document.execCommand("foreColor", false, elements.textColorInput.value);
+  }
+  activeEditor.dispatchEvent(new Event("input", { bubbles: true }));
 });
 elements.codeButton.addEventListener("pointerdown", (event) => {
   const selection = window.getSelection();
@@ -2511,6 +2953,25 @@ elements.imageInput.addEventListener("change", async () => {
   elements.imageInput.value = "";
 });
 document.addEventListener("paste", async (event) => {
+  if (!elements.codeEditorModal.hidden) {
+    if (event.target === elements.codeEditorTextarea) return;
+    event.preventDefault();
+    elements.codeEditorTextarea.focus();
+    return;
+  }
+  if (!elements.linkPopover.hidden) {
+    if (elements.linkPopover.contains(event.target)) return;
+    event.preventDefault();
+    const input =
+      document.activeElement === elements.linkTextInput
+        ? elements.linkTextInput
+        : elements.linkUrlInput;
+    const pastedText = event.clipboardData?.getData("text/plain") || "";
+    input.focus();
+    input.setRangeText(pastedText, input.selectionStart, input.selectionEnd, "end");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
+  }
   const editor = event.target.closest?.(".cell-editor, .intro-editor") || activeEditor;
   if (!editor?.matches(".cell-editor, .intro-editor")) return;
   const images = [...(event.clipboardData?.files || [])].filter((file) => file.type.startsWith("image/"));
@@ -2520,18 +2981,39 @@ document.addEventListener("paste", async (event) => {
     await insertImages(images);
     return;
   }
-  const snippet = parseCodeFromClipboard(
-    event.clipboardData?.getData("text/html") || "",
-    event.clipboardData?.getData("text/plain") || "",
-  );
-  if (!snippet) return;
-  event.preventDefault();
+  const html = event.clipboardData?.getData("text/html") || "";
+  const plainText = event.clipboardData?.getData("text/plain") || "";
+  let snippet = parseCodeFromClipboard(html, plainText);
+  if (!snippet && looksLikeCode(plainText)) {
+    const code = formatCode(plainText);
+    snippet = { language: detectCodeLanguage(code), code, width: "" };
+  }
   const selection = window.getSelection();
   const range =
     selection?.rangeCount && editor.contains(selection.anchorNode)
       ? selection.getRangeAt(0).cloneRange()
       : null;
-  insertCodeSnippet(editor, snippet, range);
+  if (snippet) {
+    event.preventDefault();
+    insertCodeSnippet(editor, snippet, range);
+    return;
+  }
+  if (isPlainUrl(plainText)) {
+    event.preventDefault();
+    activeEditor = editor;
+    const url = normalizeLinkUrl(plainText);
+    insertHtmlAtSelection(
+      `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`,
+      range,
+    );
+    return;
+  }
+  if (!html && /(?:https?:\/\/|www\.)[^\s]+/i.test(plainText)) {
+    event.preventDefault();
+    activeEditor = editor;
+    const linked = linkifyPlainText(plainText);
+    insertHtmlAtSelection(linked, range);
+  }
 });
 document.addEventListener("focusin", (event) => {
   if (event.target.matches(".intro-editor, .cell-editor")) {
@@ -2545,6 +3027,12 @@ document.addEventListener("selectionchange", () => {
   savedEditorRange = selection.getRangeAt(0).cloneRange();
 });
 document.addEventListener("pointerdown", (event) => {
+  if (
+    !elements.linkPopover.hidden &&
+    !event.target.closest("#linkPopover, #linkButton")
+  ) {
+    closeLinkPopover();
+  }
   const codeBlock = event.target.closest(".cell-code-block");
   if (codeBlock && !event.target.closest("[data-editor-ui]")) {
     const rect = codeBlock.getBoundingClientRect();
@@ -2626,7 +3114,64 @@ elements.clearButton.addEventListener("click", resetDraft);
 elements.importButton.addEventListener("click", openImport);
 elements.closeImportButton.addEventListener("click", closeImport);
 elements.applyImportButton.addEventListener("click", () => applyImport("replace"));
-elements.appendImportButton.addEventListener("click", () => applyImport("append"));
+elements.closeMediaViewerButton.addEventListener("click", closeMediaViewer);
+elements.closeCodeEditorButton.addEventListener("click", () => closeCodeEditor());
+elements.saveCodeButton.addEventListener("click", saveCodeChanges);
+elements.acceptConfirmButton.addEventListener("click", () => resolveConfirmation(true));
+elements.cancelConfirmButton.addEventListener("click", () => resolveConfirmation(false));
+elements.closeConfirmButton.addEventListener("click", () => resolveConfirmation(false));
+elements.codeEditorTextarea.addEventListener("input", () => {
+  const code = elements.codeEditorTextarea.value;
+  updateCodeEditorLineNumbers();
+  elements.codeEditorLanguage.textContent = detectCodeLanguage(code).toUpperCase();
+  const dirty = codeEditorIsDirty();
+  elements.codeEditorState.textContent = dirty ? "Есть несохранённые изменения" : "Изменений нет";
+  elements.saveCodeButton.disabled = !dirty;
+});
+elements.codeEditorTextarea.addEventListener("scroll", () => {
+  elements.codeEditorLineNumbers.scrollTop = elements.codeEditorTextarea.scrollTop;
+});
+elements.codeEditorTextarea.addEventListener("keydown", (event) => {
+  event.stopPropagation();
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    if (codeEditorIsDirty()) saveCodeChanges();
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeCodeEditor();
+    return;
+  }
+  if (event.key === "Tab") {
+    event.preventDefault();
+    const start = elements.codeEditorTextarea.selectionStart;
+    const end = elements.codeEditorTextarea.selectionEnd;
+    elements.codeEditorTextarea.setRangeText("  ", start, end, "end");
+    elements.codeEditorTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+});
+elements.codeEditorModal.addEventListener("keydown", (event) => {
+  event.stopPropagation();
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeCodeEditor();
+  }
+});
+document.addEventListener(
+  "focusin",
+  (event) => {
+    if (
+      elements.codeEditorModal.hidden ||
+      elements.codeEditorModal.contains(event.target) ||
+      (!elements.confirmModal.hidden && elements.confirmModal.contains(event.target))
+    ) {
+      return;
+    }
+    elements.codeEditorTextarea.focus();
+  },
+  true,
+);
 document.querySelectorAll(".import-source-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     importSource = tab.dataset.importSource;
@@ -2651,7 +3196,12 @@ elements.saveHistorySnapshotButton.addEventListener("click", async () => {
 elements.clearHistoryButton.addEventListener("click", async () => {
   const reports = await getAllReports();
   if (!reports.length) return;
-  if (!window.confirm(`Удалить всю локальную историю (${reports.length} отчётов)?`)) return;
+  const confirmed = await askConfirmation(`Удалить всю локальную историю (${reports.length} отчётов)?`, {
+    title: "Очистка истории",
+    confirmText: "Очистить",
+    danger: true,
+  });
+  if (!confirmed) return;
   await clearReportHistory();
   await renderHistoryList();
 });
@@ -2686,24 +3236,43 @@ document.addEventListener("click", (event) => {
     closeFloatingMenu();
   }
 });
-window.addEventListener("resize", closeFloatingMenu);
+window.addEventListener("resize", () => {
+  closeFloatingMenu();
+  if (!elements.linkPopover.hidden) positionLinkPopover();
+});
 window.addEventListener("scroll", closeFloatingMenu, true);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Backspace" || event.key === "Delete") {
     const selectedCode = document.querySelector(".cell-code-block.code-selected");
     const selectedImage = document.querySelector(".cell-image.image-selected");
-    const object = selectedCode || selectedImage;
-    if (object) {
+    const object = selectedImage;
+    if (object && document.activeElement === object) {
       event.preventDefault();
       const editor = object.closest(".cell-editor, .intro-editor");
-      if (selectedCode?.classList.contains("code-expanded")) restoreColumnAfterCode(selectedCode);
       object.remove();
       editor?.dispatchEvent(new Event("input", { bubbles: true }));
-      showToast(selectedCode ? "Фрагмент кода удалён" : "Изображение удалено");
+      showToast("Изображение удалено");
       return;
     }
   }
   if (event.key === "Escape") {
+    if (!elements.confirmModal.hidden) {
+      resolveConfirmation(false);
+      return;
+    }
+    if (!elements.linkPopover.hidden) {
+      closeLinkPopover();
+      activeEditor.focus();
+      return;
+    }
+    if (!elements.codeEditorModal.hidden) {
+      closeCodeEditor();
+      return;
+    }
+    if (!elements.mediaViewerModal.hidden) {
+      closeMediaViewer();
+      return;
+    }
     if (!elements.previewModal.hidden) closePreview();
     if (!elements.importModal.hidden) closeImport();
     if (!elements.jiraSettingsModal.hidden) closeJiraSettings();
@@ -2728,7 +3297,11 @@ document.addEventListener("keydown", (event) => {
     showToast("Черновик сохранён");
   }
 });
-window.addEventListener("beforeunload", () => {
+window.addEventListener("beforeunload", (event) => {
+  if (codeEditorIsDirty()) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
   collectDocumentFields();
   saveDraft();
 });

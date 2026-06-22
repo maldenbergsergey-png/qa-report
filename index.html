@@ -5,13 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <a class="brand" href="#" aria-label="QA Report">
-          <span class="brand-mark">Q</span>
+          <span class="brand-mark">QA</span>
           <span>
             <strong>QA Report</strong>
             <small>Редактор чек-листов</small>
@@ -56,9 +57,15 @@
             </button>
           </div>
           <div class="header-action-group header-action-group-primary">
-            <button class="button button-secondary" id="previewButton" type="button">Предпросмотр</button>
-            <button class="button button-primary" id="copyButton" type="button">Копировать</button>
-            <button class="button button-success" id="publishButton" type="button">Отправить в Jira</button>
+            <button class="button button-secondary" id="previewButton" type="button" title="Предпросмотр">
+              <span class="primary-action-icon">◉</span><span class="primary-action-label">Предпросмотр</span>
+            </button>
+            <button class="button button-primary" id="copyButton" type="button" title="Копировать">
+              <span class="primary-action-icon">⧉</span><span class="primary-action-label">Копировать</span>
+            </button>
+            <button class="button button-success" id="publishButton" type="button" title="Отправить в Jira">
+              <span class="primary-action-icon">↗</span><span class="primary-action-label">Отправить в Jira</span>
+            </button>
           </div>
         </div>
       </header>
@@ -96,6 +103,7 @@
                 <option value="ПОЧТИ ОК">ПОЧТИ ОК</option>
                 <option value="НЕ ПРОВЕРЕНО">НЕ ПРОВЕРЕНО</option>
                 <option value="ЧАСТИЧНО ПРОВЕРЕНО">ЧАСТИЧНО ПРОВЕРЕНО</option>
+                <option value="ТРЕБУЕТ УТОЧНЕНИЯ">ТРЕБУЕТ УТОЧНЕНИЯ</option>
               </select>
             </label>
           </div>
@@ -115,9 +123,34 @@
             <button type="button" data-command="insertUnorderedList" title="Маркированный список">• ≡</button>
             <button type="button" data-command="insertOrderedList" title="Нумерованный список">1. ≡</button>
             <button type="button" id="linkButton" title="Добавить ссылку">↗ Ссылка</button>
+            <label class="toolbar-color" title="Цвет текста">
+              <span>A</span>
+              <input id="textColorInput" type="color" value="#14892c" aria-label="Цвет текста" />
+            </label>
             <button type="button" id="codeButton" title="Вставить блок кода">&lt;/&gt; Код</button>
             <button type="button" id="imageButton" title="Добавить изображение">▧ Изображение</button>
             <input id="imageInput" type="file" accept="image/*" multiple hidden />
+          </div>
+          <div class="link-popover" id="linkPopover" hidden>
+            <div class="link-popover-heading">
+              <strong id="linkPopoverTitle">Добавить ссылку</strong>
+              <button class="link-popover-close" id="closeLinkPopoverButton" type="button" aria-label="Закрыть">×</button>
+            </div>
+            <label>
+              <span>Текст ссылки</span>
+              <input id="linkTextInput" type="text" placeholder="Например, документация" />
+            </label>
+            <label>
+              <span>Адрес</span>
+              <input id="linkUrlInput" type="url" placeholder="https://example.com" />
+            </label>
+            <div class="link-popover-error" id="linkPopoverError" hidden></div>
+            <div class="link-popover-actions">
+              <button class="button button-ghost danger-text" id="removeLinkButton" type="button" hidden>
+                Удалить ссылку
+              </button>
+              <button class="button button-primary" id="applyLinkButton" type="button">Применить</button>
+            </div>
           </div>
 
           <div
@@ -204,13 +237,13 @@
             ></textarea>
           </div>
           <div id="commentImportPane" class="import-pane" hidden>
-            <p>
-              Вставьте прямую ссылку на комментарий Jira. Подключение берётся из настроек Jira.
-            </p>
             <label class="field">
               <span>Ссылка на комментарий</span>
               <input id="commentImportUrl" type="url" placeholder="https://jira.example/browse/QA-123?focusedCommentId=12345" />
             </label>
+            <p>
+              Вставьте прямую ссылку на комментарий Jira. Подключение берётся из настроек Jira.
+            </p>
           </div>
           <div class="import-warning" id="importWarning" hidden></div>
           <div class="import-summary" id="importSummary" hidden></div>
@@ -218,7 +251,6 @@
         <footer class="modal-footer">
           <span>Перед импортом текущий отчёт будет сохранён в истории.</span>
           <div class="modal-actions">
-            <button class="button button-secondary" id="appendImportButton" type="button">Добавить разделы</button>
             <button class="button button-primary" id="applyImportButton" type="button">Заменить отчёт</button>
           </div>
         </footer>
@@ -248,6 +280,75 @@
     </div>
 
     <button class="focus-exit-button" id="focusExitButton" type="button" hidden>Выйти из фокус-режима</button>
+
+    <div class="modal-backdrop" id="mediaViewerModal" hidden>
+      <section class="modal media-viewer-modal" role="dialog" aria-modal="true" aria-labelledby="mediaViewerTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Вложение</div>
+            <h2 id="mediaViewerTitle">Просмотр изображения</h2>
+          </div>
+          <button class="icon-button" id="closeMediaViewerButton" type="button" aria-label="Закрыть просмотр">×</button>
+        </header>
+        <div class="media-viewer-body">
+          <img id="mediaViewerImage" alt="Просматриваемое вложение" />
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="codeEditorModal" hidden>
+      <section class="modal code-editor-modal" role="dialog" aria-modal="true" aria-labelledby="codeEditorTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Фрагмент кода</div>
+            <h2 id="codeEditorTitle">Редактирование кода</h2>
+          </div>
+          <button class="icon-button" id="closeCodeEditorButton" type="button" aria-label="Закрыть редактор кода">×</button>
+        </header>
+        <div class="code-editor-body">
+          <div class="code-editor-meta">
+            <span>Язык определяется автоматически</span>
+            <strong id="codeEditorLanguage">TEXT</strong>
+          </div>
+          <div class="code-editor-input">
+            <pre id="codeEditorLineNumbers" class="code-editor-line-numbers" aria-hidden="true">1</pre>
+            <textarea id="codeEditorTextarea" spellcheck="false" aria-label="Код" wrap="off"></textarea>
+          </div>
+        </div>
+        <footer class="modal-footer">
+          <span id="codeEditorState">Изменений нет</span>
+          <button
+            class="code-save-button"
+            id="saveCodeButton"
+            type="button"
+            disabled
+            title="Сохранить изменения"
+            aria-label="Сохранить изменения"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 4h11l3 3v13H5V4Zm3 0v6h8V4H8Zm0 10v4h8v-4H8Z" />
+            </svg>
+          </button>
+        </footer>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="confirmModal" hidden>
+      <section class="modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Подтверждение</div>
+            <h2 id="confirmModalTitle">Подтвердите действие</h2>
+          </div>
+          <button class="icon-button" id="closeConfirmButton" type="button" aria-label="Закрыть">×</button>
+        </header>
+        <div class="confirm-modal-body" id="confirmModalMessage"></div>
+        <footer class="modal-footer">
+          <button class="button button-ghost" id="cancelConfirmButton" type="button">Отмена</button>
+          <button class="button button-primary" id="acceptConfirmButton" type="button">Подтвердить</button>
+        </footer>
+      </section>
+    </div>
 
     <div class="modal-backdrop" id="jiraSettingsModal" hidden>
       <section class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="jiraSettingsTitle">
@@ -329,6 +430,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=15"></script>
+    <script src="./app.js?v=21"></script>
   </body>
 </html>
