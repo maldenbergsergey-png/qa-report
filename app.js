@@ -1017,7 +1017,10 @@ function jiraCell(value) {
   content = content
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
-    .replace(/\r?\n/g, "\\\\");
+    // Несколько пустых абзацев вокруг изображения должны стать одним
+    // переносом Jira. Иначе последний слеш экранирует начальный `!`
+    // и изображение выводится обычным текстом.
+    .replace(/(?:\r?\n)+/g, "\\\\");
   content = content.replace(
     /@@JIRA_PROTECTED_(\d+)@@/g,
     (_, index) => protectedBlocks[Number(index)] || "",
