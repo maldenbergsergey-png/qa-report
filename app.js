@@ -3086,6 +3086,11 @@ elements.imageInput.addEventListener("change", async () => {
   elements.imageInput.value = "";
 });
 document.addEventListener("paste", async (event) => {
+  const pasteTarget = event.target;
+  const isNativeTextControl =
+    pasteTarget?.matches?.("input:not([type='file']), textarea") ||
+    pasteTarget?.isContentEditable;
+
   if (!elements.feedbackModal.hidden) {
     const images = [...(event.clipboardData?.files || [])].filter((file) =>
       file.type.startsWith("image/"),
@@ -3098,6 +3103,12 @@ document.addEventListener("paste", async (event) => {
     if (elements.feedbackModal.contains(event.target)) return;
     event.preventDefault();
     elements.feedbackMessage.focus();
+    return;
+  }
+  if (
+    isNativeTextControl &&
+    !pasteTarget.closest?.(".cell-editor, .intro-editor")
+  ) {
     return;
   }
   if (!elements.codeEditorModal.hidden) {
