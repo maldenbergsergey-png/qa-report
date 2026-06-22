@@ -93,16 +93,17 @@
                 placeholder="https://company.atlassian.net/browse/QA-1234"
               />
             </label>
-            <label class="field">
+            <label class="field environment-field">
               <span>Окружение</span>
-              <select id="environment">
-                <option>STAGE</option>
-                <option>DEV</option>
-                <option>PROD</option>
-                <option>Локально</option>
-              </select>
+              <input id="environment" type="text" list="environmentOptions" placeholder="Например, STAGE" />
+              <datalist id="environmentOptions">
+                <option value="STAGE"></option>
+                <option value="DEV"></option>
+                <option value="PROD"></option>
+                <option value="Локально"></option>
+              </datalist>
             </label>
-            <label class="field">
+            <label class="field overall-status-field">
               <span>Итог</span>
               <select id="overallStatus">
                 <option value="OK">OK</option>
@@ -485,6 +486,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=22"></script>
+    <script src="./app.js?v=24"></script>
   </body>
 </html>

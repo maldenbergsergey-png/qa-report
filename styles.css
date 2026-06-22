@@ -328,7 +328,8 @@ button {
 
 .metadata-grid {
   display: grid;
-  grid-template-columns: 1.3fr 0.8fr 1fr;
+  grid-template-columns: minmax(300px, 1fr) minmax(150px, 220px) minmax(150px, 190px);
+  justify-content: start;
   gap: 14px;
   margin-bottom: 18px;
 }
@@ -350,6 +351,8 @@ button {
 
 .field input,
 .field select {
+  width: 100%;
+  min-width: 0;
   height: 40px;
   padding: 0 11px;
   border: 1px solid #b7bdc8;
@@ -367,6 +370,45 @@ button {
 
 #overallStatus {
   font-weight: 800;
+  border-color: transparent;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.overall-status-field {
+  max-width: 190px;
+}
+
+.overall-status-field #overallStatus.status-ok {
+  color: #216e4e;
+  background: #dcfff1;
+}
+
+.overall-status-field #overallStatus.status-fail {
+  color: #ae2e24;
+  background: #ffeceb;
+}
+
+.overall-status-field #overallStatus.status-almost {
+  color: #0055cc;
+  background: #e9f2ff;
+}
+
+.overall-status-field #overallStatus.status-unchecked {
+  color: #5e4db2;
+  background: #f3f0ff;
+}
+
+.overall-status-field #overallStatus.status-partial {
+  color: #974f0c;
+  background: #fff3eb;
+}
+
+.overall-status-field #overallStatus.status-clarification {
+  color: #7f3f00;
+  background: #fff0d5;
 }
 
 .editor-toolbar {
@@ -2214,6 +2256,10 @@ body.resizing-code * {
     grid-template-columns: 1fr;
   }
 
+  .overall-status-field {
+    width: min(100%, 220px);
+  }
+
   .editor-toolbar {
     gap: 1px;
     padding: 4px;
@@ -2389,6 +2435,36 @@ body.resizing-code * {
 }
 
 :root[data-theme="dark"] .status-clarification {
+  color: #ffd294;
+  background: #5b3410;
+}
+
+:root[data-theme="dark"] .overall-status-field #overallStatus.status-ok {
+  color: #7ee2b8;
+  background: #164b35;
+}
+
+:root[data-theme="dark"] .overall-status-field #overallStatus.status-fail {
+  color: #ff9c8f;
+  background: #5d1f1a;
+}
+
+:root[data-theme="dark"] .overall-status-field #overallStatus.status-almost {
+  color: #85b8ff;
+  background: #123263;
+}
+
+:root[data-theme="dark"] .overall-status-field #overallStatus.status-unchecked {
+  color: #b8acf6;
+  background: #352c63;
+}
+
+:root[data-theme="dark"] .overall-status-field #overallStatus.status-partial {
+  color: #fec57b;
+  background: #5f3811;
+}
+
+:root[data-theme="dark"] .overall-status-field #overallStatus.status-clarification {
   color: #ffd294;
   background: #5b3410;
 }

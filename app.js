@@ -401,7 +401,7 @@ function redo() {
 
 function collectDocumentFields() {
   draft.issueUrl = elements.issueUrl.value;
-  draft.environment = elements.environment.value;
+  draft.environment = elements.environment.value.trim() || "Не указано";
   draft.overallStatus = elements.overallStatus.value;
   draft.intro = cleanEditorHtml(elements.introEditor);
 }
@@ -899,7 +899,8 @@ function closeFloatingMenu() {
 
 function setStatusClass(select, status) {
   Object.values(STATUS_META).forEach((meta) => select.classList.remove(meta.className));
-  select.classList.add(STATUS_META[status].className);
+  const meta = STATUS_META[status] || STATUS_META["НЕ ПРОВЕРЕНО"];
+  select.classList.add(meta.className);
 }
 
 function hasRowContent(row) {
@@ -981,7 +982,7 @@ function htmlToWiki(html) {
       const name = node.dataset.jiraName || node.dataset.fileName || node.alt || "image.png";
       return `!${name}|thumbnail!`;
     }
-    if (tag === "figure") return content;
+    if (tag === "figure") return `\n${content}\n`;
     if (tag === "br") return "\n";
     if (tag === "ul") return [...node.children].map((item) => `* ${walk(item).trim()}`).join("\n");
     if (tag === "ol") return [...node.children].map((item) => `# ${walk(item).trim()}`).join("\n");
@@ -1007,7 +1008,10 @@ function jiraCell(value) {
   });
   content = content.replace(/![^!\r\n]+!/g, (block) => {
     const token = `@@JIRA_PROTECTED_${protectedBlocks.length}@@`;
-    protectedBlocks.push(block);
+    // Внутри Jira-таблицы вертикальная черта изображения иначе становится
+    // разделителем следующей ячейки. Jira снимает экранирование перед
+    // обработкой image markup и получает обычный !file.png|thumbnail!.
+    protectedBlocks.push(block.replace(/\|/g, "\\|"));
     return token;
   });
   content = content
