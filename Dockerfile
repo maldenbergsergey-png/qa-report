@@ -7,7 +7,8 @@ ENV HOST=0.0.0.0
 ENV PORT=4173
 
 COPY --chown=node:node package.json ./
-COPY --chown=node:node server.js app.js index.html styles.css ./
+COPY --chown=node:node server.js app.js index.html styles.css favicon.svg ./
+RUN mkdir -p /app/feedback-data && chown -R node:node /app/feedback-data
 
 USER node
 

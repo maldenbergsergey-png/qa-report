@@ -19,9 +19,16 @@
           </span>
         </a>
 
-        <div class="save-state" id="saveState">
-          <span class="save-dot"></span>
-          <span>Черновик сохранён</span>
+        <div class="header-center">
+          <button class="feedback-trigger" id="feedbackButton" type="button" title="Сообщить о проблеме" aria-label="Обратная связь">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3h6l1 3 2-1 1 2-2 1v2h3v2h-3v2l2 1-1 2-2-1-1 3H9l-1-3-2 1-1-2 2-1v-2H4v-2h3V8L5 7l1-2 2 1 1-3Zm1.4 3L9 8.2v7.6l1.4 2.2h3.2l1.4-2.2V8.2L13.6 6h-3.2ZM11 8h2v7h-2V8Z" />
+            </svg>
+          </button>
+          <div class="save-state" id="saveState">
+            <span class="save-dot"></span>
+            <span>Черновик сохранён</span>
+          </div>
         </div>
 
         <div class="top-actions">
@@ -350,6 +357,54 @@
       </section>
     </div>
 
+    <div class="modal-backdrop" id="feedbackModal" hidden>
+      <section class="modal feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Обратная связь</div>
+            <h2 id="feedbackTitle">Сообщить о проблеме</h2>
+          </div>
+          <button class="icon-button" id="closeFeedbackButton" type="button" aria-label="Закрыть">×</button>
+        </header>
+        <div class="feedback-body">
+          <p class="feedback-hint">
+            Опишите проблему и вставьте скриншоты через Command/Ctrl+V или выберите файлы.
+          </p>
+          <label class="field">
+            <span>Ваш контакт <small>необязательно</small></span>
+            <input id="feedbackContact" type="text" placeholder="Email или имя" />
+          </label>
+          <label class="field feedback-message-field">
+            <span>Описание проблемы</span>
+            <textarea id="feedbackMessage" placeholder="Что произошло и как это воспроизвести?"></textarea>
+          </label>
+          <div class="feedback-attachments">
+            <div class="feedback-attachments-heading">
+              <strong>Скриншоты</strong>
+              <button class="button button-secondary" id="feedbackFilesButton" type="button">Добавить изображения</button>
+              <input id="feedbackFilesInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden />
+            </div>
+            <div class="feedback-dropzone" id="feedbackDropzone">
+              <span>Вставьте изображение из буфера или перетащите сюда</span>
+            </div>
+            <div class="feedback-preview-list" id="feedbackPreviewList"></div>
+          </div>
+          <label class="feedback-report-option">
+            <input id="feedbackIncludeReport" type="checkbox" />
+            <span>Приложить текущий чек-лист без настроек Jira и токенов</span>
+          </label>
+          <div class="feedback-error" id="feedbackError" hidden></div>
+        </div>
+        <footer class="modal-footer">
+          <span id="feedbackState">Обращение сохранится на сервере приложения.</span>
+          <div class="modal-actions">
+            <button class="button button-ghost" id="cancelFeedbackButton" type="button">Отмена</button>
+            <button class="button button-primary" id="sendFeedbackButton" type="button">Отправить</button>
+          </div>
+        </footer>
+      </section>
+    </div>
+
     <div class="modal-backdrop" id="jiraSettingsModal" hidden>
       <section class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="jiraSettingsTitle">
         <header class="modal-header">
@@ -430,6 +485,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=21"></script>
+    <script src="./app.js?v=22"></script>
   </body>
 </html>

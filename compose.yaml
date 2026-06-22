@@ -11,9 +11,24 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 4173
+      FEEDBACK_DIR: /app/feedback-data
+      RESEND_API_KEY_FILE: /run/secrets/resend_api_key
+      FEEDBACK_TO_EMAIL: ${FEEDBACK_TO_EMAIL:-}
+      FEEDBACK_FROM_EMAIL: ${FEEDBACK_FROM_EMAIL:-}
+    secrets:
+      - resend_api_key
+    volumes:
+      - feedback_data:/app/feedback-data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+volumes:
+  feedback_data:
+
+secrets:
+  resend_api_key:
+    file: ./secrets/resend_api_key

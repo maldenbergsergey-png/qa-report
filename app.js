@@ -85,6 +85,7 @@ const elements = {
   summaryChart: document.querySelector("#summaryChart"),
   summaryList: document.querySelector("#summaryList"),
   saveState: document.querySelector("#saveState"),
+  feedbackButton: document.querySelector("#feedbackButton"),
   toast: document.querySelector("#toast"),
   blockFormat: document.querySelector("#blockFormat"),
   linkButton: document.querySelector("#linkButton"),
@@ -149,6 +150,19 @@ const elements = {
   closeConfirmButton: document.querySelector("#closeConfirmButton"),
   cancelConfirmButton: document.querySelector("#cancelConfirmButton"),
   acceptConfirmButton: document.querySelector("#acceptConfirmButton"),
+  feedbackModal: document.querySelector("#feedbackModal"),
+  closeFeedbackButton: document.querySelector("#closeFeedbackButton"),
+  cancelFeedbackButton: document.querySelector("#cancelFeedbackButton"),
+  sendFeedbackButton: document.querySelector("#sendFeedbackButton"),
+  feedbackContact: document.querySelector("#feedbackContact"),
+  feedbackMessage: document.querySelector("#feedbackMessage"),
+  feedbackFilesButton: document.querySelector("#feedbackFilesButton"),
+  feedbackFilesInput: document.querySelector("#feedbackFilesInput"),
+  feedbackDropzone: document.querySelector("#feedbackDropzone"),
+  feedbackPreviewList: document.querySelector("#feedbackPreviewList"),
+  feedbackIncludeReport: document.querySelector("#feedbackIncludeReport"),
+  feedbackError: document.querySelector("#feedbackError"),
+  feedbackState: document.querySelector("#feedbackState"),
 };
 
 let draft = loadDraft();
@@ -173,6 +187,7 @@ let codeEditorInitialValue = "";
 let linkEditorRange = null;
 let editingLink = null;
 let confirmResolver = null;
+let feedbackFiles = [];
 
 applyTheme(localStorage.getItem("qa-report-theme") || "light");
 historyCurrent = serializeDraft();
@@ -2375,6 +2390,124 @@ function readFileAsDataUrl(file) {
   });
 }
 
+function openFeedback() {
+  feedbackFiles = [];
+  elements.feedbackContact.value = "";
+  elements.feedbackMessage.value = "";
+  elements.feedbackIncludeReport.checked = false;
+  elements.feedbackError.hidden = true;
+  elements.feedbackState.textContent = "Обращение сохранится на сервере приложения.";
+  renderFeedbackFiles();
+  elements.feedbackModal.hidden = false;
+  document.body.style.overflow = "hidden";
+  requestAnimationFrame(() => elements.feedbackMessage.focus());
+}
+
+function closeFeedback() {
+  elements.feedbackModal.hidden = true;
+  document.body.style.overflow = "";
+  feedbackFiles = [];
+  renderFeedbackFiles();
+}
+
+async function addFeedbackFiles(files) {
+  const images = [...files].filter((file) => file.type.startsWith("image/"));
+  for (const file of images) {
+    if (feedbackFiles.length >= 6) {
+      elements.feedbackError.textContent = "Можно приложить не более 6 изображений";
+      elements.feedbackError.hidden = false;
+      break;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      elements.feedbackError.textContent = `Файл «${file.name}» больше 8 МБ`;
+      elements.feedbackError.hidden = false;
+      continue;
+    }
+    const totalSize = feedbackFiles.reduce((sum, entry) => sum + entry.size, 0) + file.size;
+    if (totalSize > 18 * 1024 * 1024) {
+      elements.feedbackError.textContent = "Общий размер изображений больше 18 МБ";
+      elements.feedbackError.hidden = false;
+      break;
+    }
+    feedbackFiles.push({
+      id: crypto.randomUUID(),
+      name: file.name || `screenshot-${feedbackFiles.length + 1}.png`,
+      type: file.type,
+      size: file.size,
+      dataUrl: await readFileAsDataUrl(file),
+    });
+  }
+  renderFeedbackFiles();
+}
+
+function renderFeedbackFiles() {
+  elements.feedbackPreviewList.innerHTML = "";
+  elements.feedbackDropzone.hidden = feedbackFiles.length > 0;
+  feedbackFiles.forEach((file) => {
+    const item = document.createElement("div");
+    item.className = "feedback-preview-item";
+    const image = document.createElement("img");
+    image.src = file.dataUrl;
+    image.alt = "";
+    const info = document.createElement("span");
+    info.textContent = file.name;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.title = "Удалить изображение";
+    remove.addEventListener("click", () => {
+      feedbackFiles = feedbackFiles.filter((entry) => entry.id !== file.id);
+      renderFeedbackFiles();
+    });
+    item.append(image, info, remove);
+    elements.feedbackPreviewList.append(item);
+  });
+}
+
+async function sendFeedback() {
+  const message = elements.feedbackMessage.value.trim();
+  if (!message) {
+    elements.feedbackError.textContent = "Опишите проблему";
+    elements.feedbackError.hidden = false;
+    elements.feedbackMessage.focus();
+    return;
+  }
+  elements.feedbackError.hidden = true;
+  elements.sendFeedbackButton.disabled = true;
+  elements.feedbackState.textContent = "Отправляем обращение…";
+  try {
+    collectDocumentFields();
+    const response = await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contact: elements.feedbackContact.value.trim(),
+        message,
+        pageUrl: window.location.href,
+        userAgent: navigator.userAgent,
+        viewport: `${window.innerWidth}×${window.innerHeight}`,
+        theme: document.documentElement.dataset.theme || "light",
+        report: elements.feedbackIncludeReport.checked ? clone(draft) : null,
+        files: feedbackFiles.map((file) => ({
+          name: file.name,
+          type: file.type,
+          dataBase64: file.dataUrl.split(",")[1] || "",
+        })),
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    closeFeedback();
+    showToast("Обращение отправлено", 4500);
+  } catch (error) {
+    elements.feedbackError.textContent = `Не удалось отправить: ${error.message}`;
+    elements.feedbackError.hidden = false;
+    elements.feedbackState.textContent = "Проверьте соединение и попробуйте ещё раз.";
+  } finally {
+    elements.sendFeedbackButton.disabled = false;
+  }
+}
+
 async function insertImages(files) {
   if (!activeEditor?.matches(".cell-editor, .intro-editor")) return;
   for (const file of [...files]) {
@@ -2953,6 +3086,20 @@ elements.imageInput.addEventListener("change", async () => {
   elements.imageInput.value = "";
 });
 document.addEventListener("paste", async (event) => {
+  if (!elements.feedbackModal.hidden) {
+    const images = [...(event.clipboardData?.files || [])].filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (images.length) {
+      event.preventDefault();
+      await addFeedbackFiles(images);
+      return;
+    }
+    if (elements.feedbackModal.contains(event.target)) return;
+    event.preventDefault();
+    elements.feedbackMessage.focus();
+    return;
+  }
   if (!elements.codeEditorModal.hidden) {
     if (event.target === elements.codeEditorTextarea) return;
     event.preventDefault();
@@ -3107,6 +3254,27 @@ document.addEventListener("drop", (event) => {
 });
 
 elements.previewButton.addEventListener("click", openPreview);
+elements.feedbackButton.addEventListener("click", openFeedback);
+elements.closeFeedbackButton.addEventListener("click", closeFeedback);
+elements.cancelFeedbackButton.addEventListener("click", closeFeedback);
+elements.sendFeedbackButton.addEventListener("click", sendFeedback);
+elements.feedbackFilesButton.addEventListener("click", () => elements.feedbackFilesInput.click());
+elements.feedbackFilesInput.addEventListener("change", async () => {
+  await addFeedbackFiles(elements.feedbackFilesInput.files);
+  elements.feedbackFilesInput.value = "";
+});
+elements.feedbackDropzone.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  elements.feedbackDropzone.classList.add("drag-over");
+});
+elements.feedbackDropzone.addEventListener("dragleave", () => {
+  elements.feedbackDropzone.classList.remove("drag-over");
+});
+elements.feedbackDropzone.addEventListener("drop", async (event) => {
+  event.preventDefault();
+  elements.feedbackDropzone.classList.remove("drag-over");
+  await addFeedbackFiles(event.dataTransfer.files);
+});
 elements.copyButton.addEventListener("click", copyMarkup);
 elements.modalCopyButton.addEventListener("click", copyMarkup);
 elements.closePreviewButton.addEventListener("click", closePreview);
@@ -3139,6 +3307,10 @@ elements.codeEditorTextarea.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key === "Escape") {
+    if (!elements.feedbackModal.hidden) {
+      closeFeedback();
+      return;
+    }
     event.preventDefault();
     closeCodeEditor();
     return;

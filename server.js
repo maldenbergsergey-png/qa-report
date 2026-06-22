@@ -1,13 +1,57 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const ROOT = __dirname;
+
+function loadLocalEnv() {
+  const envPath = path.join(ROOT, ".env");
+  try {
+    const source = fs.readFileSync(envPath, "utf8");
+    source.split(/\r?\n/).forEach((line) => {
+      const match = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (!match || Object.hasOwn(process.env, match[1])) return;
+      let value = match[2].trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      process.env[match[1]] = value;
+    });
+  } catch (error) {
+    if (error.code !== "ENOENT") console.warn(`Не удалось прочитать .env: ${error.message}`);
+  }
+}
+
+loadLocalEnv();
+
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
 const MAX_BODY = 30 * 1024 * 1024;
 const APP_VERSION = "0.2.2";
 const API_REVISION = 4;
+const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
+const feedbackRateLimit = new Map();
+
+function readSecret(name) {
+  const candidates = [
+    process.env[`${name}_FILE`],
+    path.join(ROOT, "secrets", name.toLowerCase()),
+  ].filter(Boolean);
+  for (const filePath of candidates) {
+    try {
+      return fs.readFileSync(filePath, "utf8").trim();
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        console.warn(`Не удалось прочитать secret ${name}: ${error.message}`);
+      }
+    }
+  }
+  return String(process.env[name] || "").trim();
+}
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -466,6 +510,134 @@ async function handleJiraAttachments(request, response) {
   sendJson(response, 200, { ok: true, attachments: results });
 }
 
+function escapeHtmlText(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function emailFeedback(metadata, files, report) {
+  const apiKey = readSecret("RESEND_API_KEY");
+  const to = process.env.FEEDBACK_TO_EMAIL || "maldenbergsergey@gmail.com";
+  if (!apiKey) return { emailed: false, configured: false, reason: "email-not-configured" };
+  const from = process.env.FEEDBACK_FROM_EMAIL || "QA Report <onboarding@resend.dev>";
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      subject: `QA Report — обратная связь ${metadata.id}`,
+      html: `
+        <h2>Новое обращение QA Report</h2>
+        <p><strong>Контакт:</strong> ${escapeHtmlText(metadata.contact || "не указан")}</p>
+        <p><strong>Время:</strong> ${escapeHtmlText(metadata.createdAt)}</p>
+        <p><strong>Страница:</strong> ${escapeHtmlText(metadata.pageUrl)}</p>
+        <p><strong>Viewport:</strong> ${escapeHtmlText(metadata.viewport)}</p>
+        <h3>Описание</h3>
+        <p>${escapeHtmlText(metadata.message).replace(/\n/g, "<br>")}</p>
+        <p>Текущий отчёт: ${metadata.reportIncluded ? "приложен в report.json" : "не приложен"}</p>
+      `,
+      attachments: [
+        ...files.map((file) => ({
+          filename: file.name,
+          content: file.bytes.toString("base64"),
+        })),
+        ...(report
+          ? [{
+              filename: "report.json",
+              content: Buffer.from(JSON.stringify(report, null, 2)).toString("base64"),
+            }]
+          : []),
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      emailed: false,
+      configured: true,
+      reason: payload.message || `Resend HTTP ${response.status}`,
+    };
+  }
+  return { emailed: true, configured: true, emailId: payload.id || "" };
+}
+
+async function handleFeedback(request, response) {
+  const clientAddress = request.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const recent = (feedbackRateLimit.get(clientAddress) || []).filter(
+    (timestamp) => now - timestamp < 10 * 60 * 1000,
+  );
+  if (recent.length >= 5) {
+    const error = new Error("Слишком много обращений. Попробуйте снова через несколько минут");
+    error.status = 429;
+    throw error;
+  }
+  recent.push(now);
+  feedbackRateLimit.set(clientAddress, recent);
+  const body = await readJson(request);
+  const message = String(body.message || "").trim();
+  if (!message) throw new Error("Описание проблемы не заполнено");
+  if (message.length > 20000) throw new Error("Описание проблемы слишком длинное");
+  const rawFiles = Array.isArray(body.files) ? body.files : [];
+  if (rawFiles.length > 6) throw new Error("Можно приложить не более 6 изображений");
+  const files = rawFiles.map((file, index) =>
+    decodeImageFile({ ...file, attachmentId: `feedback-${index + 1}` }, index),
+  );
+  const totalSize = files.reduce((sum, file) => sum + file.bytes.length, 0);
+  if (totalSize > 20 * 1024 * 1024) throw new Error("Общий размер изображений больше 20 МБ");
+
+  const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`;
+  const entryDir = path.join(FEEDBACK_DIR, id);
+  await fs.promises.mkdir(entryDir, { recursive: true });
+  const metadata = {
+    id,
+    createdAt: new Date().toISOString(),
+    contact: String(body.contact || "").trim().slice(0, 500),
+    message,
+    pageUrl: String(body.pageUrl || "").slice(0, 2000),
+    userAgent: String(body.userAgent || "").slice(0, 1000),
+    viewport: String(body.viewport || "").slice(0, 100),
+    theme: String(body.theme || "").slice(0, 40),
+    reportIncluded: Boolean(body.report),
+    attachments: files.map((file) => ({ name: file.name, type: file.type, size: file.bytes.length })),
+  };
+  await Promise.all([
+    fs.promises.writeFile(path.join(entryDir, "feedback.json"), JSON.stringify(metadata, null, 2)),
+    ...(body.report
+      ? [fs.promises.writeFile(path.join(entryDir, "report.json"), JSON.stringify(body.report, null, 2))]
+      : []),
+    ...files.map((file) => fs.promises.writeFile(path.join(entryDir, file.name), file.bytes)),
+  ]);
+
+  const mail = await emailFeedback(metadata, files, body.report || null).catch((error) => ({
+    emailed: false,
+    configured: true,
+    reason: error.message,
+  }));
+  if (mail.configured && !mail.emailed) {
+    const error = new Error(
+      `Обращение сохранено, но email не отправлен: ${mail.reason || "неизвестная ошибка"}`,
+    );
+    error.status = 502;
+    throw error;
+  }
+  sendJson(response, 201, {
+    ok: true,
+    feedbackId: id,
+    stored: true,
+    emailed: mail.emailed,
+    emailId: mail.emailId || "",
+    emailReason: mail.reason || "",
+  });
+}
+
 function serveStatic(request, response) {
   const requestPath = new URL(request.url, "http://localhost").pathname;
   const relative = requestPath === "/" ? "index.html" : decodeURIComponent(requestPath.slice(1));
@@ -511,6 +683,10 @@ const server = http.createServer(async (request, response) => {
       await handleJiraAttachments(request, response);
       return;
     }
+    if (request.method === "POST" && request.url === "/api/feedback") {
+      await handleFeedback(request, response);
+      return;
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       sendJson(response, 405, { error: "Метод не поддерживается" });
       return;
@@ -524,6 +700,20 @@ const server = http.createServer(async (request, response) => {
       jiraPath: error.pathname || "",
     });
   }
+});
+
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") {
+    console.error(
+      `Порт ${PORT} уже занят. Вероятно, QA Report уже запущен: http://${HOST}:${PORT}`,
+    );
+    console.error(
+      `Остановите предыдущий процесс или запустите приложение на другом порту: PORT=4174 node server.js`,
+    );
+    process.exit(1);
+  }
+  console.error(`Не удалось запустить QA Report: ${error.message}`);
+  process.exit(1);
 });
 
 server.listen(PORT, HOST, () => {
