@@ -2418,12 +2418,36 @@ function formatCode(code) {
 function looksLikeCode(value) {
   const source = String(value || "").trim();
   if (!source) return false;
-  if (detectCodeLanguage(source) !== "text") return true;
+  const detectedLanguage = detectCodeLanguage(source);
+  if (detectedLanguage !== "text") return true;
   if (!source.includes("\n")) return false;
+
+  const lines = source.split("\n").map((line) => line.trimEnd());
+  const meaningfulLines = lines.filter((line) => line.trim());
+  if (!meaningfulLines.length) return false;
+
+  const jsonishStart = /^[\s]*[{\[]/.test(source);
+  const indentedLines = meaningfulLines.filter((line) => /^(?:\s{2,}|\t)\S/.test(line)).length;
+  const structuralLines = meaningfulLines.filter((line) =>
+    /(?:=>|[{}[\];]|\)\s*[,;]?$)/.test(line),
+  ).length;
+  const codeAssignmentLines = meaningfulLines.filter((line) =>
+    /^\s*(?:const|let|var|return|await|this\.|[\w$.[\]'"]+)\s*(?:=|\+=|-=|=>)\s*/.test(line),
+  ).length;
+  const objectLikeLines = meaningfulLines.filter((line) =>
+    /^\s*["']?[\w$.-]+["']?\s*:\s*.+,?\s*$/.test(line),
+  ).length;
+  const commandLines = meaningfulLines.filter((line) =>
+    /^\s*(?:npm|yarn|pnpm|git|curl|docker|kubectl|ssh|cd|mkdir|rm|cp|mv)\b/.test(line),
+  ).length;
+
   return (
-    /^[\s]*[{\[]/m.test(source) ||
-    /[{}[\]();=>]/.test(source) ||
-    /^(?:\s{2,}|\t)\S/m.test(source)
+    jsonishStart ||
+    indentedLines >= 2 ||
+    structuralLines >= 2 ||
+    codeAssignmentLines >= 2 ||
+    objectLikeLines >= 2 ||
+    commandLines >= 2
   );
 }
 
