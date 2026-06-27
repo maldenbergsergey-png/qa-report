@@ -3061,16 +3061,16 @@ function showToast(message, duration = 2500) {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (!elements.themeToggle) return;
-  const dark = theme === "dark";
+  const iconMap = { light: "#icon-sun", graphite: "#icon-graphite", dark: "#icon-moon" };
   elements.themeToggle.querySelector(".theme-icon use")?.setAttribute(
     "href",
-    dark ? "#icon-sun" : "#icon-moon",
+    iconMap[theme] || "#icon-moon",
   );
-  elements.themeToggle.setAttribute(
-    "aria-label",
-    dark ? "Включить светлую тему" : "Включить тёмную тему",
-  );
-  elements.themeToggle.title = dark ? "Включить светлую тему" : "Включить тёмную тему";
+  document.querySelectorAll(".theme-menu-item").forEach((item) => {
+    const isActive = item.dataset.theme === theme;
+    item.classList.toggle("current", isActive);
+    item.setAttribute("aria-current", isActive ? "true" : "false");
+  });
 }
 
 function closeHeaderDropdowns(exceptMenu = null) {
@@ -3698,10 +3698,31 @@ elements.testJiraButton.addEventListener("click", testJiraConnection);
 elements.publishButton.addEventListener("click", publishToJira);
 elements.jiraType.addEventListener("change", updateJiraSettingsLabels);
 elements.jiraAuthMethod.addEventListener("change", updateJiraSettingsLabels);
-elements.themeToggle.addEventListener("click", () => {
-  const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-  localStorage.setItem("qa-report-theme", theme);
-  applyTheme(theme);
+elements.themeToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById("themeMenu");
+  if (!menu) return;
+  if (menu.hidden) {
+    closeHeaderDropdowns();
+    menu.hidden = false;
+    elements.themeToggle.setAttribute("aria-expanded", "true");
+    menu.querySelector("button")?.focus();
+  } else {
+    menu.hidden = true;
+    elements.themeToggle.setAttribute("aria-expanded", "false");
+  }
+});
+
+document.querySelectorAll(".theme-menu-item").forEach((item) => {
+  item.addEventListener("click", () => {
+    const theme = item.dataset.theme;
+    localStorage.setItem("qa-report-theme", theme);
+    applyTheme(theme);
+    const menu = document.getElementById("themeMenu");
+    menu.hidden = true;
+    elements.themeToggle.setAttribute("aria-expanded", "false");
+    elements.themeToggle.focus();
+  });
 });
 document.querySelectorAll(".preview-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
@@ -3714,12 +3735,26 @@ document.querySelectorAll(".preview-tab").forEach((tab) => {
 });
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".header-dropdown")) closeHeaderDropdowns();
+  if (!event.target.closest(".theme-selector")) {
+    const themeMenu = document.getElementById("themeMenu");
+    if (themeMenu && !themeMenu.hidden) {
+      themeMenu.hidden = true;
+      elements.themeToggle?.setAttribute("aria-expanded", "false");
+    }
+  }
   if (!event.target.closest(".floating-context-menu, .row-menu-button, .column-menu-button, .cell-image")) {
     closeFloatingMenu();
   }
 });
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  const themeMenu = document.getElementById("themeMenu");
+  if (themeMenu && !themeMenu.hidden) {
+    themeMenu.hidden = true;
+    elements.themeToggle?.setAttribute("aria-expanded", "false");
+    elements.themeToggle?.focus();
+    return;
+  }
   const openedMenu = document.querySelector(".header-dropdown.open");
   if (!openedMenu) return;
   const trigger = openedMenu.querySelector(".header-dropdown-trigger");

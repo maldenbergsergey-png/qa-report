@@ -24,6 +24,7 @@
       <symbol id="icon-code" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14" /></symbol>
       <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z" /></symbol>
       <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
+      <symbol id="icon-graphite" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" /><path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" /></symbol>
       <symbol id="icon-life-buoy" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /><path d="m5.6 5.6 4.3 4.3M14.1 14.1l4.3 4.3M18.4 5.6l-4.3 4.3M9.9 14.1l-4.3 4.3" /></symbol>
       <symbol id="icon-bug" viewBox="0 0 24 24"><path d="M8 6.5A4 4 0 0 1 16 6.5M9 3 7.5 1.5M15 3l1.5-1.5M8 9h8v6a4 4 0 0 1-8 0V9ZM4 10h4M16 10h4M4 15h4M16 15h4M6 20l2.5-2.5M18 20l-2.5-2.5M12 9v10" /></symbol>
       <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></symbol>
@@ -48,9 +49,25 @@
             <span class="save-dot"></span>
             <span>Черновик сохранён</span>
           </div>
-          <button class="header-icon-button theme-toggle" id="themeToggle" type="button" title="Включить тёмную тему" aria-label="Включить тёмную тему">
-            <svg class="ui-icon theme-icon" aria-hidden="true"><use href="#icon-moon"></use></svg>
-          </button>
+          <div class="theme-selector">
+            <button class="header-icon-button theme-toggle" id="themeToggle" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="themeMenu" title="Выберите тему" aria-label="Выберите тему">
+              <svg class="ui-icon theme-icon" aria-hidden="true"><use href="#icon-moon"></use></svg>
+            </button>
+            <div class="theme-menu" id="themeMenu" role="menu" hidden>
+              <button class="theme-menu-item" data-theme="light" type="button" role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-sun"></use></svg>
+                <span>Светлая</span>
+              </button>
+              <button class="theme-menu-item" data-theme="graphite" type="button" role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-graphite"></use></svg>
+                <span>Графитовая</span>
+              </button>
+              <button class="theme-menu-item" data-theme="dark" type="button" role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-moon"></use></svg>
+                <span>Тёмная</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <nav class="header-report-actions" aria-label="Действия с отчётом">
