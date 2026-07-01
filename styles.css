@@ -92,7 +92,7 @@ button {
 
 .topbar {
   position: sticky;
-  z-index: 30;
+  z-index: 80;
   top: 0;
   height: 72px;
   display: grid;
@@ -128,6 +128,7 @@ button {
   min-width: 0;
   align-items: center;
   gap: 18px;
+  overflow: visible;
 }
 
 .brand {
@@ -288,6 +289,7 @@ button {
 
 .header-dropdown {
   position: relative;
+  z-index: 90;
 }
 
 .header-dropdown-trigger {
@@ -308,7 +310,7 @@ button {
 
 .header-dropdown-menu {
   position: absolute;
-  z-index: 120;
+  z-index: 160;
   top: calc(100% + 8px);
   left: 0;
   width: max-content;
@@ -357,11 +359,12 @@ button {
 
 .theme-selector {
   position: relative;
+  z-index: 90;
 }
 
 .theme-menu {
   position: absolute;
-  z-index: 120;
+  z-index: 160;
   top: calc(100% + 8px);
   left: 0;
   width: max-content;
@@ -2134,7 +2137,9 @@ body.focus-mode-active .floating-help-button {
 .cell-code-block:hover,
 .cell-code-block:focus,
 .cell-image:hover,
-.cell-image:focus {
+.cell-image:focus,
+.cell-file:hover,
+.cell-file:focus {
   border-color: color-mix(in srgb, var(--primary) 62%, var(--line));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 12%, transparent);
   outline: none;
@@ -2237,7 +2242,10 @@ body.focus-mode-active .floating-help-button {
 .cell-code-block:focus-within .object-action-panel,
 .cell-image:hover .object-action-panel,
 .cell-image:focus .object-action-panel,
-.cell-image:focus-within .object-action-panel {
+.cell-image:focus-within .object-action-panel,
+.cell-file:hover .object-action-panel,
+.cell-file:focus .object-action-panel,
+.cell-file:focus-within .object-action-panel {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
@@ -2320,12 +2328,75 @@ body.focus-mode-active .floating-help-button {
   margin-left: auto;
 }
 
+.cell-file {
+  position: relative;
+  display: grid;
+  width: min(100%, 340px);
+  max-width: 100%;
+  min-height: 58px;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  padding: 8px 94px 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--canvas));
+  color: var(--ink);
+  cursor: default;
+  user-select: none;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.cell-file.file-selected {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.file-type-badge {
+  display: grid;
+  min-width: 44px;
+  height: 40px;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--primary) 16%, var(--surface));
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.file-card-body {
+  min-width: 0;
+}
+
+.file-card-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.file-card-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .jira-preview [data-editor-ui] {
   display: none !important;
 }
 
 .jira-preview .cell-code-block,
-.jira-preview .cell-image {
+.jira-preview .cell-image,
+.jira-preview .cell-file {
   pointer-events: none;
 }
 
@@ -2951,9 +3022,10 @@ body.resizing-code * {
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.22);
 }
 
+:root[data-theme="dark"] .brand-mark,
 :root[data-theme="graphite"] .brand-mark {
-  background: #c5161d;
-  box-shadow: 0 8px 18px rgba(197, 22, 29, 0.28);
+  background: linear-gradient(145deg, #579dff, #0c66e4 70%);
+  box-shadow: 0 6px 16px rgba(12, 102, 228, 0.24);
 }
 
 :root[data-theme="dark"] .link-popover {
@@ -3040,6 +3112,17 @@ body.resizing-code * {
   border-color: #363b43;
   color: #e9f2ff;
   background: #111317;
+}
+
+:root[data-theme="dark"] .cell-file,
+:root[data-theme="graphite"] .cell-file {
+  border-color: #363b43;
+  background: #1b2027;
+}
+
+:root[data-theme="dark"] .file-type-badge,
+:root[data-theme="graphite"] .file-type-badge {
+  background: rgba(76, 154, 255, 0.16);
 }
 
 :root[data-theme="dark"] .object-action-panel,

@@ -6,6 +6,7 @@ const DB_VERSION = 1;
 const REPORT_STORE = "reports";
 const HISTORY_LIMIT = 50;
 const REQUIRED_API_REVISION = 5;
+const FILE_ATTACHMENT_MAX_SIZE = 15 * 1024 * 1024;
 
 const STATUS_META = {
   OK: { className: "status-ok", color: "#22a06b", jiraColor: "#14892c" },
@@ -152,6 +153,7 @@ const elements = {
   codeButton: document.querySelector("#codeButton"),
   imageButton: document.querySelector("#imageButton"),
   imageInput: document.querySelector("#imageInput"),
+  fileInput: document.querySelector("#fileInput"),
   commentImportUrl: document.querySelector("#commentImportUrl"),
   markupImportPane: document.querySelector("#markupImportPane"),
   commentImportPane: document.querySelector("#commentImportPane"),
@@ -471,6 +473,7 @@ function render() {
   elements.introEditor.querySelectorAll("figcaption").forEach((caption) => caption.remove());
   highlightCodeBlocks(elements.introEditor);
   enhanceImageControls(elements.introEditor);
+  enhanceFileControls(elements.introEditor);
   draft.intro = cleanEditorHtml(elements.introEditor);
   renderSections();
   renderSummary();
@@ -511,6 +514,7 @@ function renderSections() {
     elements.sections.append(fragment);
     highlightCodeBlocks(sectionElement);
     enhanceImageControls(sectionElement);
+    enhanceFileControls(sectionElement);
   });
   scheduleStickySectionUpdate();
 }
@@ -1108,6 +1112,12 @@ function htmlToSpreadsheetText(html) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (node.matches?.("[data-editor-ui]")) return;
+    if (node.matches?.(".cell-file")) {
+      const name = node.dataset.jiraName || node.dataset.fileName || "файл";
+      const link = node.dataset.jiraUrl || "";
+      append(link ? `[Файл: ${name}] ${link}` : `[Файл: ${name}]`);
+      return;
+    }
     const tag = node.tagName.toLowerCase();
     if (tag === "br") {
       newline();
@@ -1168,6 +1178,7 @@ function htmlToWiki(html) {
   function walk(node) {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent;
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    if (node.matches?.(".cell-file")) return fileCardToWiki(node);
     const tag = node.tagName.toLowerCase();
     if ((tag === "span" && node.style.color) || (tag === "font" && node.getAttribute("color"))) {
       const content = [...node.childNodes].map(walk).join("");
@@ -1246,6 +1257,11 @@ function jiraCell(value) {
     protectedBlocks.push(block);
     return token;
   });
+  content = content.replace(/\[[^\]\r\n]+\|https?:\/\/[^\]\r\n]+\]/g, (block) => {
+    const token = `@@JIRA_LINK_${protectedBlocks.length}@@`;
+    protectedBlocks.push(block);
+    return token;
+  });
   // Если перед image-макросом оставить Jira-перенос `\\`, Jira перестаёт
   // распознавать изображение и воспринимает `|thumbnail` как новую ячейку.
   // Поэтому только на границе текста и изображения используем обычный пробел.
@@ -1261,7 +1277,7 @@ function jiraCell(value) {
       return count > 1 ? "\n\u00a0\n" : "\n";
     });
   content = content.replace(
-    /@@JIRA_(?:PROTECTED|IMAGE)_(\d+)@@/g,
+    /@@JIRA_(?:PROTECTED|IMAGE|LINK)_(\d+)@@/g,
     (_, index) => protectedBlocks[Number(index)] || "",
   );
   return content.trim() ? content : " ";
@@ -1767,6 +1783,9 @@ function previewEditorHtml(html) {
   container.querySelectorAll(".cell-image").forEach((figure) => {
     figure.classList.remove("image-selected");
     figure.removeAttribute("tabindex");
+  });
+  container.querySelectorAll(".cell-file").forEach((card) => {
+    card.removeAttribute("tabindex");
   });
   return container.innerHTML;
 }
@@ -2294,7 +2313,7 @@ async function checkBackendCompatibility() {
 }
 
 async function uploadPendingImages(settings, issue) {
-  const files = collectLocalImages();
+  const files = [...collectLocalImages(), ...collectLocalFiles()];
   if (!files.length) return [];
   elements.publishButton.textContent = `Вложения 0/${files.length}`;
   const result = await jiraRequest("/api/jira/attachments", {
@@ -2544,6 +2563,9 @@ function cleanEditorHtml(editor) {
     delete figure.dataset.dragBound;
     figure.removeAttribute("draggable");
     figure.removeAttribute("tabindex");
+  });
+  clone.querySelectorAll(".cell-file").forEach((card) => {
+    card.removeAttribute("tabindex");
   });
   return clone.innerHTML;
 }
@@ -3269,7 +3291,7 @@ async function sendFeedback() {
 async function insertImages(files) {
   if (!activeEditor?.matches(".cell-editor, .intro-editor")) return;
   for (const file of [...files]) {
-    if (!file.type.startsWith("image/")) continue;
+    if (!isImageLikeFile(file)) continue;
     if (file.size > 10 * 1024 * 1024) {
       showToast(`Файл ${file.name} больше 10 МБ`);
       continue;
@@ -3281,6 +3303,175 @@ async function insertImages(files) {
     );
   }
   enhanceImageControls(activeEditor);
+}
+
+function getFileExtension(name = "", mimeType = "") {
+  const extension = String(name || "").split(".").pop();
+  if (extension && extension !== name) return extension.slice(0, 8).toUpperCase();
+  const subtype = String(mimeType || "").split("/")[1] || "FILE";
+  return subtype.replace(/[^a-z0-9]+/gi, "").slice(0, 8).toUpperCase() || "FILE";
+}
+
+function isImageLikeFile(file) {
+  if (file.type?.startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i.test(file.name || "");
+}
+
+function formatFileSize(size) {
+  const bytes = Number(size) || 0;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} МБ`;
+  if (bytes >= 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+  return `${bytes} Б`;
+}
+
+function createFileCardHtml({ id, name, type, size, dataUrl }) {
+  const extension = getFileExtension(name, type);
+  return (
+    `<figure class="cell-file" contenteditable="false" tabindex="0" ` +
+    `data-attachment-id="${escapeHtml(id)}" ` +
+    `data-file-name="${escapeHtml(name)}" ` +
+    `data-file-extension="${escapeHtml(extension)}" ` +
+    `data-mime-type="${escapeHtml(type || "application/octet-stream")}" ` +
+    `data-file-size="${escapeHtml(String(size || 0))}" ` +
+    `data-data-url="${escapeHtml(dataUrl)}">` +
+    `<span class="file-type-badge">${escapeHtml(extension)}</span>` +
+    `<span class="file-card-body">` +
+    `<strong class="file-card-name" title="${escapeHtml(name)}">${escapeHtml(name)}</strong>` +
+    `<span class="file-card-meta">${escapeHtml(formatFileSize(size))}</span>` +
+    `</span>` +
+    `</figure><p><br></p>`
+  );
+}
+
+async function insertFiles(files) {
+  if (!activeEditor?.matches(".cell-editor, .intro-editor")) return;
+  for (const file of [...files]) {
+    if (isImageLikeFile(file)) continue;
+    if (file.size > FILE_ATTACHMENT_MAX_SIZE) {
+      showToast(`Файл «${file.name}» больше ${formatFileSize(FILE_ATTACHMENT_MAX_SIZE)}`);
+      continue;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      insertHtmlAtCursor(
+        createFileCardHtml({
+          id: crypto.randomUUID(),
+          name: file.name || `file-${Date.now()}`,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          dataUrl,
+        }),
+      );
+    } catch {
+      showToast(`Не удалось прочитать файл «${file.name || "без названия"}»`);
+    }
+  }
+  enhanceFileControls(activeEditor);
+}
+
+async function insertAttachments(files) {
+  const list = [...files];
+  const images = list.filter(isImageLikeFile);
+  const ordinaryFiles = list.filter((file) => !isImageLikeFile(file));
+  if (images.length) await insertImages(images);
+  if (ordinaryFiles.length) await insertFiles(ordinaryFiles);
+}
+
+function fileCardToWiki(card) {
+  const name = card.dataset.jiraName || card.dataset.fileName || "file";
+  const url = card.dataset.jiraUrl || "";
+  return url ? `[${name}|${url}]` : `[Файл: ${name}]`;
+}
+
+function extractFileCardHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = html || "";
+  const card = template.content.querySelector(".cell-file");
+  if (!card) return "";
+  card.querySelectorAll("[data-editor-ui]").forEach((item) => item.remove());
+  card.classList.remove("file-selected");
+  card.contentEditable = "false";
+  card.removeAttribute("tabindex");
+  return `${card.outerHTML}<p><br></p>`;
+}
+
+async function downloadFileCard(card) {
+  try {
+    const dataUrl = card.dataset.dataUrl || card.dataset.jiraUrl || "";
+    if (!dataUrl) throw new Error("У файла нет локальных данных");
+    const link = document.createElement("a");
+    link.href = dataUrl;
+    link.download = card.dataset.fileName || card.dataset.jiraName || "file";
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } catch {
+    showToast("Не удалось скачать файл");
+  }
+}
+
+async function copyFileLink(card) {
+  const clone = card.cloneNode(true);
+  clone.querySelectorAll("[data-editor-ui]").forEach((item) => item.remove());
+  clone.classList.remove("file-selected");
+  clone.removeAttribute("tabindex");
+  const html = `${clone.outerHTML}<p><br></p>`;
+  const plain = card.dataset.fileName || card.dataset.jiraName || "Файл";
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+      throw new Error("Расширенный буфер обмена не поддерживается");
+    }
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/plain": new Blob([plain], { type: "text/plain" }),
+        "text/html": new Blob([html], { type: "text/html" }),
+      }),
+    ]);
+    showToast("Файл скопирован");
+  } catch {
+    await writeClipboardText(plain, "Имя файла скопировано");
+  }
+}
+
+function showFileMenu(card, anchor = card) {
+  showFloatingMenu(anchor, [
+    { label: "Скачать файл", icon: "download", action: () => downloadFileCard(card) },
+  ]);
+}
+
+function enhanceFileControls(root = document) {
+  root.querySelectorAll(".cell-file").forEach((card) => {
+    ensureMediaBoundaries(card);
+    card.querySelectorAll(":scope > [data-editor-ui]").forEach((item) => item.remove());
+    const name = card.dataset.fileName || card.dataset.jiraName || "Файл";
+    card.tabIndex = 0;
+    card.setAttribute("aria-label", `Файл ${name}`);
+    const nameNode = card.querySelector(".file-card-name");
+    if (nameNode) nameNode.title = name;
+    const controls = document.createElement("span");
+    controls.className = "object-action-panel file-controls";
+    controls.dataset.editorUi = "true";
+    controls.contentEditable = "false";
+    controls.append(
+      createObjectActionButton({
+        icon: "copy",
+        title: "Копировать файл",
+        action: () => copyFileLink(card),
+      }),
+      createObjectActionButton({
+        icon: "trash",
+        title: "Удалить файл",
+        className: "object-action-danger",
+        action: () => deleteEditorObject(card, "Файл удалён — отменить можно через Ctrl/Cmd+Z"),
+      }),
+      createObjectActionButton({
+        icon: "more",
+        title: "Ещё действия",
+        action: (_event, button) => showFileMenu(card, button),
+      }),
+    );
+    card.append(controls);
+  });
 }
 
 async function imageToPngBlob(image) {
@@ -3479,6 +3670,7 @@ function selectImage(figure) {
     if (item !== figure) item.classList.remove("image-selected");
   });
   document.querySelectorAll(".cell-code-block.code-selected").forEach((item) => item.classList.remove("code-selected"));
+  document.querySelectorAll(".cell-file.file-selected").forEach((item) => item.classList.remove("file-selected"));
   figure.classList.add("image-selected");
   figure.tabIndex = 0;
   figure.focus({ preventScroll: true });
@@ -3633,6 +3825,42 @@ function collectLocalImages() {
   return images;
 }
 
+function collectLocalFiles() {
+  const files = [];
+  const collectFromHtml = (html, location) => {
+    const container = document.createElement("div");
+    container.innerHTML = html || "";
+    container.querySelectorAll(".cell-file[data-attachment-id]").forEach((card) => {
+      if (card.dataset.jiraUrl) return;
+      const dataUrl = card.dataset.dataUrl || "";
+      const [, dataBase64 = ""] = dataUrl.split(",");
+      if (!dataBase64) return;
+      files.push({
+        attachmentId: card.dataset.attachmentId,
+        name: card.dataset.fileName || "file",
+        type: card.dataset.mimeType || "application/octet-stream",
+        size: Number(card.dataset.fileSize) || 0,
+        dataBase64,
+        ...location,
+      });
+    });
+  };
+  collectFromHtml(draft.intro, { location: "intro" });
+  for (const section of draft.sections) {
+    for (const row of section.rows) {
+      for (const [columnId, html] of Object.entries(row.cells)) {
+        collectFromHtml(html, {
+          location: "cell",
+          sectionId: section.id,
+          rowId: row.id,
+          columnId,
+        });
+      }
+    }
+  }
+  return files;
+}
+
 function collectCurrentAttachments() {
   const attachments = [];
   const seen = new Set();
@@ -3648,6 +3876,17 @@ function collectCurrentAttachments() {
         id: image.dataset.jiraId || image.dataset.attachmentId || "",
         content: image.dataset.jiraUrl || image.src || "",
         thumbnail: image.dataset.jiraThumbnail || image.src || "",
+      });
+    });
+    container.querySelectorAll(".cell-file").forEach((card) => {
+      const filename = card.dataset.jiraName || card.dataset.fileName || "file";
+      if (seen.has(filename)) return;
+      seen.add(filename);
+      attachments.push({
+        filename,
+        id: card.dataset.jiraId || card.dataset.attachmentId || "",
+        content: card.dataset.jiraUrl || "",
+        thumbnail: "",
       });
     });
   };
@@ -3673,6 +3912,14 @@ function applyUploadedAttachments(uploaded) {
       image.dataset.jiraId = uploadedFile.id || "";
       image.dataset.jiraUrl = uploadedFile.content || "";
       if (uploadedFile.thumbnail) image.dataset.jiraThumbnail = uploadedFile.thumbnail;
+      changed = true;
+    });
+    container.querySelectorAll(".cell-file[data-attachment-id]").forEach((card) => {
+      const uploadedFile = byLocalId.get(card.dataset.attachmentId);
+      if (!uploadedFile) return;
+      card.dataset.jiraName = uploadedFile.filename || card.dataset.fileName;
+      card.dataset.jiraId = uploadedFile.id || "";
+      card.dataset.jiraUrl = uploadedFile.content || "";
       changed = true;
     });
     return changed ? container.innerHTML : html;
@@ -4449,10 +4696,27 @@ elements.codeButton.addEventListener("pointerdown", (event) => {
   event.preventDefault();
 });
 elements.codeButton.addEventListener("click", insertCodeBlock);
-elements.imageButton.addEventListener("click", () => elements.imageInput.click());
+elements.imageButton.addEventListener("pointerdown", () => {
+  const selection = window.getSelection();
+  if (selection?.rangeCount && activeEditor?.contains(selection.anchorNode)) {
+    savedEditorRange = selection.getRangeAt(0).cloneRange();
+  }
+});
+elements.imageButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  showFloatingMenu(elements.imageButton, [
+    { label: "Изображение", icon: "paperclip", action: () => elements.imageInput.click() },
+    { label: "Файл", icon: "paperclip", action: () => elements.fileInput.click() },
+  ]);
+});
 elements.imageInput.addEventListener("change", async () => {
-  await insertImages(elements.imageInput.files);
+  await insertAttachments(elements.imageInput.files);
   elements.imageInput.value = "";
+});
+elements.fileInput.addEventListener("change", async () => {
+  await insertAttachments(elements.fileInput.files);
+  elements.fileInput.value = "";
 });
 document.addEventListener("paste", async (event) => {
   const pasteTarget = event.target;
@@ -4501,15 +4765,28 @@ document.addEventListener("paste", async (event) => {
   }
   const editor = event.target.closest?.(".cell-editor, .intro-editor") || activeEditor;
   if (!editor?.matches(".cell-editor, .intro-editor")) return;
-  const images = [...(event.clipboardData?.files || [])].filter((file) => file.type.startsWith("image/"));
-  if (images.length) {
+  const pastedFiles = [...(event.clipboardData?.files || [])];
+  if (pastedFiles.length) {
     event.preventDefault();
     activeEditor = editor;
-    await insertImages(images);
+    await insertAttachments(pastedFiles);
     return;
   }
   const html = event.clipboardData?.getData("text/html") || "";
   const plainText = event.clipboardData?.getData("text/plain") || "";
+  const fileCardHtml = extractFileCardHtml(html);
+  if (fileCardHtml) {
+    event.preventDefault();
+    activeEditor = editor;
+    const selection = window.getSelection();
+    const range =
+      selection?.rangeCount && editor.contains(selection.anchorNode)
+        ? selection.getRangeAt(0).cloneRange()
+        : null;
+    insertHtmlAtSelection(fileCardHtml, range);
+    enhanceFileControls(editor);
+    return;
+  }
   let snippet = parseCodeFromClipboard(html, plainText);
   if (!snippet && looksLikeCode(plainText)) {
     const code = formatCode(plainText);
@@ -4580,7 +4857,18 @@ document.addEventListener("pointerdown", (event) => {
     return;
   }
   const figure = event.target.closest(".cell-image");
-  if (!figure) return;
+  if (!figure) {
+    const fileCard = event.target.closest(".cell-file");
+    if (fileCard && !event.target.closest("[data-editor-ui]")) {
+      pointerObjectGesture = {
+        object: fileCard,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      };
+    }
+    return;
+  }
   const rect = figure.getBoundingClientRect();
   const onResizeHandle = rect.right - event.clientX <= 18 && rect.bottom - event.clientY <= 18;
   if (onResizeHandle) {
@@ -4636,8 +4924,24 @@ document.addEventListener("click", (event) => {
     }
     return;
   }
+  const fileCard = event.target.closest(".cell-file");
+  if (fileCard && !event.target.closest("[data-editor-ui]")) {
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelectorAll(".cell-file.file-selected").forEach((item) => {
+      if (item !== fileCard) item.classList.remove("file-selected");
+    });
+    document.querySelectorAll(".cell-image.image-selected").forEach((item) => item.classList.remove("image-selected"));
+    document.querySelectorAll(".cell-code-block.code-selected").forEach((item) => item.classList.remove("code-selected"));
+    fileCard.classList.add("file-selected");
+    fileCard.focus({ preventScroll: true });
+    return;
+  }
   document.querySelectorAll(".cell-image.image-selected").forEach((item) => {
     item.classList.remove("image-selected");
+  });
+  document.querySelectorAll(".cell-file.file-selected").forEach((item) => {
+    item.classList.remove("file-selected");
   });
   document.querySelectorAll(".cell-code-block.code-selected").forEach((item) => {
     item.classList.remove("code-selected");
@@ -4893,7 +5197,7 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest(".toolbar-color-wrap") && !elements.textColorMenu.hidden) {
     closeTextColorMenu();
   }
-  if (!event.target.closest(".floating-context-menu, .row-menu-button, .column-menu-button, .cell-image, .cell-code-block")) {
+  if (!event.target.closest(".floating-context-menu, .row-menu-button, .column-menu-button, .cell-image, .cell-file, .cell-code-block")) {
     closeFloatingMenu();
   }
 });
@@ -4931,23 +5235,25 @@ document.addEventListener("keydown", (event) => {
   const focusedObject = document.activeElement;
   if (
     (event.key === "Enter" || event.key === " ") &&
-    focusedObject?.matches?.(".cell-code-block, .cell-image") &&
+    focusedObject?.matches?.(".cell-code-block, .cell-image, .cell-file") &&
     event.target === focusedObject
   ) {
     event.preventDefault();
     if (focusedObject.matches(".cell-code-block")) openCodeEditor(focusedObject);
-    else openMediaViewer(focusedObject.querySelector("img"));
+    else if (focusedObject.matches(".cell-image")) openMediaViewer(focusedObject.querySelector("img"));
+    else downloadFileCard(focusedObject);
     return;
   }
   if (event.key === "Backspace" || event.key === "Delete") {
     const selectedImage = document.querySelector(".cell-image.image-selected");
-    const object = selectedImage;
+    const selectedFile = document.querySelector(".cell-file.file-selected");
+    const object = selectedImage || selectedFile;
     if (object && document.activeElement === object) {
       event.preventDefault();
       const editor = object.closest(".cell-editor, .intro-editor");
       object.remove();
       editor?.dispatchEvent(new Event("input", { bubbles: true }));
-      showToast("Изображение удалено");
+      showToast(selectedFile ? "Файл удалён" : "Изображение удалено");
       return;
     }
   }

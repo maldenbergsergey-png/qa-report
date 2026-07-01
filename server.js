@@ -31,6 +31,7 @@ loadLocalEnv();
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
 const MAX_BODY = 30 * 1024 * 1024;
+const MAX_ATTACHMENT_FILE = 15 * 1024 * 1024;
 const APP_VERSION = "0.2.2";
 const API_REVISION = 5;
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
@@ -270,6 +271,17 @@ function sanitizeAttachmentName(name, mimeType, index) {
   return `${baseWithoutExtension || `image-${index + 1}`}${expectedExtension}`;
 }
 
+function sanitizeGenericAttachmentName(name, index) {
+  const raw = path.basename(String(name || `file-${index + 1}.bin`));
+  const safe = raw
+    .normalize("NFKC")
+    .replace(/[\\/:*?"<>|\u0000-\u001F]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+  return safe || `file-${index + 1}.bin`;
+}
+
 function detectImageMime(bytes) {
   if (
     bytes.length >= 8 &&
@@ -317,6 +329,29 @@ function decodeImageFile(file, index) {
     bytes,
     type: detectedType,
     name: sanitizeAttachmentName(file.name, detectedType, index),
+  };
+}
+
+function decodeAttachmentFile(file, index) {
+  const declaredType = String(file.type || "").toLowerCase();
+  if (declaredType.startsWith("image/")) return { ...decodeImageFile(file, index), kind: "image" };
+  const base64 = String(file.dataBase64 || "")
+    .replace(/^data:[^;]+;base64,/i, "")
+    .replace(/\s+/g, "");
+  if (!base64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+    throw new Error(`Файл «${file.name || index + 1}» содержит некорректные base64-данные`);
+  }
+  const bytes = Buffer.from(base64, "base64");
+  if (!bytes.length) throw new Error(`Файл «${file.name || index + 1}» пустой`);
+  if (bytes.length > MAX_ATTACHMENT_FILE) {
+    throw new Error(`Файл «${file.name || index + 1}» больше 15 МБ`);
+  }
+  return {
+    attachmentId: file.attachmentId,
+    bytes,
+    type: declaredType || "application/octet-stream",
+    name: sanitizeGenericAttachmentName(file.name, index),
+    kind: "file",
   };
 }
 
@@ -648,9 +683,9 @@ async function handleJiraAttachments(request, response) {
   const { issueKey } = parseIssueReference(connection, body.issueUrl);
   const files = Array.isArray(body.files) ? body.files : [];
   if (!files.length) return sendJson(response, 200, { ok: true, attachments: [] });
-  if (files.length > 20) throw new Error("За один раз можно загрузить не более 20 изображений");
+  if (files.length > 20) throw new Error("За один раз можно загрузить не более 20 вложений");
   const version = connection.type === "cloud" ? "3" : "2";
-  const normalizedFiles = files.map(decodeImageFile);
+  const normalizedFiles = files.map(decodeAttachmentFile);
   const usedNames = new Set();
   const usedScreenshotNumbers = [];
   let attachmentListAvailable = false;
@@ -676,8 +711,21 @@ async function handleJiraAttachments(request, response) {
   normalizedFiles.forEach((file, index) => {
     const extension = path.extname(file.name) || ".png";
     if (!attachmentListAvailable) {
-      file.name = `${fallbackPrefix}-${index + 1}${extension}`;
+      file.name = file.kind === "image" ? `${fallbackPrefix}-${index + 1}${extension}` : file.name;
       usedNames.add(file.name.toLowerCase());
+      return;
+    }
+    if (file.kind !== "image") {
+      const requested = file.name;
+      const parsed = path.parse(requested);
+      let candidate = requested;
+      let counter = 2;
+      while (usedNames.has(candidate.toLowerCase())) {
+        candidate = `${parsed.name || "file"}-${counter}${parsed.ext || ""}`;
+        counter += 1;
+      }
+      file.name = candidate;
+      usedNames.add(candidate.toLowerCase());
       return;
     }
     const requestedName = file.name.toLowerCase();
