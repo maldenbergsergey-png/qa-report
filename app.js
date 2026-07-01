@@ -1,10 +1,11 @@
 const STORAGE_KEY = "qa-report-editor-draft-v2";
 const JIRA_SETTINGS_KEY = "qa-report-jira-settings-v1";
+const STORAGE_SETTINGS_KEY = "qa-report-storage-settings-v1";
 const DB_NAME = "qa-report-editor";
 const DB_VERSION = 1;
 const REPORT_STORE = "reports";
 const HISTORY_LIMIT = 50;
-const REQUIRED_API_REVISION = 4;
+const REQUIRED_API_REVISION = 5;
 
 const STATUS_META = {
   OK: { className: "status-ok", color: "#22a06b", jiraColor: "#14892c" },
@@ -76,6 +77,7 @@ const elements = {
   previewButton: document.querySelector("#previewButton"),
   copyButton: document.querySelector("#copyButton"),
   copyVisualButton: document.querySelector("#copyVisualButton"),
+  exportXlsxButton: document.querySelector("#exportXlsxButton"),
   clearButton: document.querySelector("#clearButton"),
   importButton: document.querySelector("#importButton"),
   previewModal: document.querySelector("#previewModal"),
@@ -109,10 +111,21 @@ const elements = {
   textColorInput: document.querySelector("#textColorInput"),
   textColorMenu: document.querySelector("#textColorMenu"),
   themeToggle: document.querySelector("#themeToggle"),
-  jiraSettingsButton: document.querySelector("#jiraSettingsButton"),
+  settingsButton: document.querySelector("#settingsButton"),
   publishButton: document.querySelector("#publishButton"),
   jiraSettingsModal: document.querySelector("#jiraSettingsModal"),
   closeJiraSettingsButton: document.querySelector("#closeJiraSettingsButton"),
+  settingsJiraSectionButton: document.querySelector("#settingsJiraSectionButton"),
+  settingsFilesSectionButton: document.querySelector("#settingsFilesSectionButton"),
+  settingsJiraSection: document.querySelector("#settingsJiraSection"),
+  settingsFilesSection: document.querySelector("#settingsFilesSection"),
+  jiraManualTab: document.querySelector("#jiraManualTab"),
+  jiraCurlTab: document.querySelector("#jiraCurlTab"),
+  jiraManualPane: document.querySelector("#jiraManualPane"),
+  jiraCurlPane: document.querySelector("#jiraCurlPane"),
+  jiraCurlInput: document.querySelector("#jiraCurlInput"),
+  jiraCurlState: document.querySelector("#jiraCurlState"),
+  parseJiraCurlButton: document.querySelector("#parseJiraCurlButton"),
   jiraType: document.querySelector("#jiraType"),
   jiraAuthMethod: document.querySelector("#jiraAuthMethod"),
   jiraAuthMethodField: document.querySelector("#jiraAuthMethodField"),
@@ -125,6 +138,13 @@ const elements = {
   jiraConnectionState: document.querySelector("#jiraConnectionState"),
   testJiraButton: document.querySelector("#testJiraButton"),
   saveJiraSettingsButton: document.querySelector("#saveJiraSettingsButton"),
+  yandexStorageEnabled: document.querySelector("#yandexStorageEnabled"),
+  yandexStorageToken: document.querySelector("#yandexStorageToken"),
+  yandexStoragePath: document.querySelector("#yandexStoragePath"),
+  googleStorageEnabled: document.querySelector("#googleStorageEnabled"),
+  googleStorageToken: document.querySelector("#googleStorageToken"),
+  googleStorageFolder: document.querySelector("#googleStorageFolder"),
+  storageConnectionState: document.querySelector("#storageConnectionState"),
   undoButton: document.querySelector("#undoButton"),
   redoButton: document.querySelector("#redoButton"),
   historyButton: document.querySelector("#historyButton"),
@@ -187,6 +207,8 @@ let savedEditorRange = null;
 let floatingMenu = null;
 let jiraSecret = "";
 let jiraSettings = loadJiraSettings();
+let storageSecrets = { yandex: "", google: "" };
+let storageSettings = loadStorageSettings();
 let undoStack = [];
 let redoStack = [];
 let historyCurrent = "";
@@ -244,6 +266,27 @@ function loadJiraSettings() {
     };
   } catch {
     return { type: "data-center", authMethod: "pat", baseUrl: "", user: "" };
+  }
+}
+
+function loadStorageSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_SETTINGS_KEY) || "{}");
+    return {
+      yandex: {
+        enabled: Boolean(saved.yandex?.enabled),
+        path: saved.yandex?.path || "/QA Report",
+      },
+      google: {
+        enabled: Boolean(saved.google?.enabled),
+        folderId: saved.google?.folderId || "",
+      },
+    };
+  } catch {
+    return {
+      yandex: { enabled: false, path: "/QA Report" },
+      google: { enabled: false, folderId: "" },
+    };
   }
 }
 
@@ -1109,6 +1152,87 @@ function htmlToText(html) {
   return (container.textContent || "").trim();
 }
 
+function wrapSpreadsheetLongLine(line, maxLength = 96) {
+  const chunks = [];
+  let rest = String(line || "");
+  while (rest.length > maxLength) {
+    const window = rest.slice(0, maxLength + 1);
+    const softBreak = Math.max(
+      window.lastIndexOf(","),
+      window.lastIndexOf(";"),
+      window.lastIndexOf(" "),
+      window.lastIndexOf("&"),
+    );
+    const index = softBreak > Math.floor(maxLength * 0.55) ? softBreak + 1 : maxLength;
+    chunks.push(rest.slice(0, index).trimEnd());
+    rest = rest.slice(index).trimStart();
+  }
+  chunks.push(rest);
+  return chunks.join("\n");
+}
+
+function normalizeSpreadsheetCodeBlock(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) => wrapSpreadsheetLongLine(line, 92))
+    .join("\n")
+    .trim();
+}
+
+function htmlToSpreadsheetText(html) {
+  const container = document.createElement("div");
+  container.innerHTML = html || "";
+  container.querySelectorAll("[data-editor-ui], figcaption").forEach((node) => node.remove());
+  const lines = [];
+  let current = "";
+  const append = (value) => {
+    current += String(value || "").replace(/\u00a0/g, " ");
+  };
+  const newline = () => {
+    const line = current.trimEnd();
+    if (line || lines.length) lines.push(line);
+    current = "";
+  };
+  const walk = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      append(node.textContent || "");
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.matches?.("[data-editor-ui]")) return;
+    const tag = node.tagName.toLowerCase();
+    if (tag === "br") {
+      newline();
+      return;
+    }
+    if (tag === "img") {
+      const name = node.dataset.jiraName || node.dataset.fileName || node.alt || "изображение";
+      const link = node.dataset.jiraUrl || (node.src && !node.src.startsWith("data:") ? node.src : "");
+      append(link ? `[Изображение: ${name}] ${link}` : `[Изображение: ${name}]`);
+      return;
+    }
+    if (tag === "a") {
+      const text = node.textContent?.trim() || node.getAttribute("href") || "";
+      const href = node.getAttribute("href") || "";
+      append(href && href !== text ? `${text} (${href})` : text);
+      return;
+    }
+    if (tag === "pre") {
+      newline();
+      append(`Код:\n${normalizeSpreadsheetCodeBlock(extractCodeText(node))}`);
+      newline();
+      return;
+    }
+    const block = ["p", "div", "figure", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"].includes(tag);
+    if (tag === "li" && current.trim()) newline();
+    for (const child of node.childNodes) walk(child);
+    if (block) newline();
+  };
+  for (const child of container.childNodes) walk(child);
+  if (current.trim()) newline();
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function extractCodeText(node) {
   let output = "";
   const walk = (current) => {
@@ -1869,7 +1993,8 @@ function generateAdfDocument() {
 
 function fillJiraSettingsForm() {
   elements.jiraType.value = jiraSettings.type;
-  elements.jiraAuthMethod.value = jiraSettings.authMethod || "pat";
+  elements.jiraAuthMethod.value =
+    jiraSettings.authMethod === "basic" || jiraSettings.authMethod === "cookie" ? jiraSettings.authMethod : "pat";
   elements.jiraBaseUrl.value = jiraSettings.baseUrl;
   elements.jiraUser.value = jiraSettings.user;
   elements.jiraToken.value = jiraSecret;
@@ -1879,6 +2004,7 @@ function fillJiraSettingsForm() {
 function updateJiraSettingsLabels() {
   const cloud = elements.jiraType.value === "cloud";
   const basic = !cloud && elements.jiraAuthMethod.value === "basic";
+  const cookie = !cloud && elements.jiraAuthMethod.value === "cookie";
   elements.jiraAuthMethodField.hidden = cloud;
   elements.jiraUserField.hidden = !cloud && !basic;
   elements.jiraUserLabel.textContent = cloud ? "Email Atlassian" : "Логин Jira";
@@ -1886,12 +2012,16 @@ function updateJiraSettingsLabels() {
     ? "API token"
     : basic
       ? "Пароль"
-      : "Personal Access Token";
+      : cookie
+        ? "Cookie"
+        : "Personal Access Token";
   elements.jiraToken.placeholder = cloud
     ? "API token не сохраняется"
     : basic
       ? "Пароль не сохраняется"
-      : "Токен не сохраняется";
+      : cookie
+        ? "Cookie не сохраняется"
+        : "Токен не сохраняется";
   elements.jiraToken.autocomplete = basic ? "current-password" : "off";
   elements.jiraUser.placeholder = cloud ? "name@company.ru" : "username";
 }
@@ -1910,7 +2040,13 @@ function validateJiraSettings(settings, token) {
     throw new Error("Укажите полный адрес Jira, начиная с http:// или https://");
   }
   if (!token) {
-    throw new Error(settings.authMethod === "basic" ? "Укажите пароль" : "Укажите токен");
+    throw new Error(
+      settings.authMethod === "basic"
+        ? "Укажите пароль"
+        : settings.authMethod === "cookie"
+          ? "Укажите cookie"
+          : "Укажите токен",
+    );
   }
   if ((settings.type === "cloud" || settings.authMethod === "basic") && !settings.user) {
     throw new Error(settings.type === "cloud" ? "Для Jira Cloud укажите email Atlassian" : "Укажите логин Jira");
@@ -1922,9 +2058,60 @@ function setConnectionState(message, type = "") {
   elements.jiraConnectionState.className = `connection-state ${type}`.trim();
 }
 
+function setStorageConnectionState(message, type = "") {
+  elements.storageConnectionState.textContent = message;
+  elements.storageConnectionState.className = `connection-state ${type}`.trim();
+}
+
+function fillStorageSettingsForm() {
+  elements.yandexStorageEnabled.checked = Boolean(storageSettings.yandex.enabled);
+  elements.yandexStoragePath.value = storageSettings.yandex.path || "/QA Report";
+  elements.yandexStorageToken.value = storageSecrets.yandex;
+  elements.googleStorageEnabled.checked = Boolean(storageSettings.google.enabled);
+  elements.googleStorageFolder.value = storageSettings.google.folderId || "";
+  elements.googleStorageToken.value = storageSecrets.google;
+}
+
+function readStorageSettingsForm() {
+  return {
+    yandex: {
+      enabled: elements.yandexStorageEnabled.checked,
+      path: elements.yandexStoragePath.value.trim() || "/QA Report",
+    },
+    google: {
+      enabled: elements.googleStorageEnabled.checked,
+      folderId: elements.googleStorageFolder.value.trim(),
+    },
+  };
+}
+
+function saveStorageSettings() {
+  storageSettings = readStorageSettingsForm();
+  storageSecrets = {
+    yandex: elements.yandexStorageToken.value,
+    google: elements.googleStorageToken.value,
+  };
+  localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(storageSettings));
+}
+
+function setSettingsSection(section) {
+  const files = section === "files";
+  elements.settingsJiraSectionButton.classList.toggle("active", !files);
+  elements.settingsFilesSectionButton.classList.toggle("active", files);
+  elements.settingsJiraSection.hidden = files;
+  elements.settingsFilesSection.hidden = !files;
+  elements.settingsJiraSection.classList.toggle("active", !files);
+  elements.settingsFilesSection.classList.toggle("active", files);
+  elements.testJiraButton.hidden = files;
+}
+
 function openJiraSettings() {
   fillJiraSettingsForm();
+  fillStorageSettingsForm();
+  setSettingsSection("jira");
+  setJiraSettingsTab("manual");
   setConnectionState("Соединение ещё не проверялось.");
+  setStorageConnectionState("Настройки файлового хранилища ещё не сохранялись.");
   elements.jiraSettingsModal.hidden = false;
   document.body.style.overflow = "hidden";
 }
@@ -1939,7 +2126,222 @@ function saveJiraSettings() {
   jiraSettings = settings;
   jiraSecret = elements.jiraToken.value;
   localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
+  saveStorageSettings();
   setConnectionState("Настройки сохранены. Секрет останется только до перезагрузки.", "success");
+  setStorageConnectionState("Настройки файлов сохранены. Токены останутся только до перезагрузки.", "success");
+}
+
+function setJiraSettingsTab(tab) {
+  const curl = tab === "curl";
+  elements.jiraManualTab.classList.toggle("active", !curl);
+  elements.jiraCurlTab.classList.toggle("active", curl);
+  elements.jiraManualTab.setAttribute("aria-selected", curl ? "false" : "true");
+  elements.jiraCurlTab.setAttribute("aria-selected", curl ? "true" : "false");
+  elements.jiraManualPane.hidden = curl;
+  elements.jiraCurlPane.hidden = !curl;
+}
+
+function tokenizeCurlCommand(value) {
+  const tokens = [];
+  let current = "";
+  let quote = "";
+  let escaping = false;
+  for (const char of String(value || "")) {
+    if (escaping) {
+      if (char !== "\n" && char !== "\r") current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = "";
+      else current += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function splitCurlHeader(value) {
+  const index = String(value || "").indexOf(":");
+  if (index < 0) return null;
+  return {
+    name: value.slice(0, index).trim().toLowerCase(),
+    value: value.slice(index + 1).trim(),
+  };
+}
+
+function inferJiraBaseUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  url.username = "";
+  url.password = "";
+  url.hash = "";
+  url.search = "";
+  const restIndex = url.pathname.search(/\/rest\/api\/(?:2|3|latest)\b/i);
+  const browseIndex = url.pathname.search(/\/browse\/[A-Z][A-Z0-9_]*-\d+\b/i);
+  const cutIndex = restIndex >= 0 ? restIndex : browseIndex;
+  url.pathname = cutIndex >= 0 ? url.pathname.slice(0, cutIndex) : "";
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString().replace(/\/$/, "");
+}
+
+function decodeBasicCredentials(value) {
+  const decoded = atob(value.trim());
+  const separator = decoded.indexOf(":");
+  if (separator < 0) throw new Error("Basic Authorization не содержит user:token");
+  return {
+    user: decoded.slice(0, separator),
+    token: decoded.slice(separator + 1),
+  };
+}
+
+function parseJiraCurl(value) {
+  const tokens = tokenizeCurlCommand(value);
+  if (!tokens.length) throw new Error("Вставьте curl-запрос");
+  const headers = new Map();
+  let url = "";
+  let userToken = "";
+  let cookie = "";
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const next = tokens[index + 1] || "";
+    if (token === "curl") continue;
+    if (token === "-H" || token === "--header") {
+      const header = splitCurlHeader(next);
+      if (header) headers.set(header.name, header.value);
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-H") && token.length > 2) {
+      const header = splitCurlHeader(token.slice(2));
+      if (header) headers.set(header.name, header.value);
+      continue;
+    }
+    if (token.startsWith("--header=")) {
+      const header = splitCurlHeader(token.slice("--header=".length));
+      if (header) headers.set(header.name, header.value);
+      continue;
+    }
+    if (token === "-u" || token === "--user" || token === "--user-name") {
+      userToken = next;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-u") && token.length > 2) {
+      userToken = token.slice(2);
+      continue;
+    }
+    if (token.startsWith("--user=")) {
+      userToken = token.slice("--user=".length);
+      continue;
+    }
+    if (token === "-b" || token === "--cookie") {
+      cookie = next;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--cookie=")) {
+      cookie = token.slice("--cookie=".length);
+      continue;
+    }
+    if (token === "--url") {
+      url = next;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--url=")) {
+      url = token.slice("--url=".length);
+      continue;
+    }
+    if (!token.startsWith("-") && /^https?:\/\//i.test(token)) {
+      url = token;
+    }
+  }
+  if (!url) throw new Error("В curl не найден URL Jira");
+  const baseUrl = inferJiraBaseUrl(url);
+  const hostname = new URL(baseUrl).hostname.toLowerCase();
+  const isCloud = hostname.endsWith(".atlassian.net");
+  const authorization = headers.get("authorization") || "";
+  const headerCookie = headers.get("cookie") || "";
+  if (/^bearer\s+/i.test(authorization)) {
+    return {
+      settings: { type: "data-center", authMethod: "pat", baseUrl, user: "" },
+      token: authorization.replace(/^bearer\s+/i, "").trim(),
+      summary: "Найден Bearer-токен",
+    };
+  }
+  if (/^basic\s+/i.test(authorization)) {
+    const credentials = decodeBasicCredentials(authorization.replace(/^basic\s+/i, ""));
+    return {
+      settings: {
+        type: isCloud ? "cloud" : "data-center",
+        authMethod: isCloud ? "api-token" : "basic",
+        baseUrl,
+        user: credentials.user,
+      },
+      token: credentials.token,
+      summary: "Найден Basic Authorization",
+    };
+  }
+  if (userToken) {
+    const separator = userToken.indexOf(":");
+    if (separator < 0) throw new Error("Параметр -u должен быть в формате user:token");
+    return {
+      settings: {
+        type: isCloud ? "cloud" : "data-center",
+        authMethod: isCloud ? "api-token" : "basic",
+        baseUrl,
+        user: userToken.slice(0, separator),
+      },
+      token: userToken.slice(separator + 1),
+      summary: "Найден параметр -u user:token",
+    };
+  }
+  if (headerCookie || cookie) {
+    return {
+      settings: { type: "data-center", authMethod: "cookie", baseUrl, user: "" },
+      token: headerCookie || cookie,
+      summary: "Найден Cookie",
+    };
+  }
+  throw new Error("В curl не найден Authorization, -u или Cookie");
+}
+
+function showJiraCurlState(message, type = "") {
+  elements.jiraCurlState.textContent = message;
+  elements.jiraCurlState.className = `settings-curl-state ${type}`.trim();
+  elements.jiraCurlState.hidden = false;
+}
+
+function applyJiraCurlSettings() {
+  try {
+    const parsed = parseJiraCurl(elements.jiraCurlInput.value);
+    jiraSettings = parsed.settings;
+    jiraSecret = parsed.token;
+    localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
+    fillJiraSettingsForm();
+    setConnectionState("Настройки из curl сохранены. Секрет останется только до перезагрузки.", "success");
+    showJiraCurlState(`${parsed.summary}: ${jiraSettings.baseUrl}`, "success");
+  } catch (error) {
+    showJiraCurlState(error.message, "error");
+    setConnectionState(error.message, "error");
+  }
 }
 
 function parseIssueUrl(value) {
@@ -2714,8 +3116,8 @@ function detectCodeLanguage(code) {
   const source = String(code || "").trim();
   if (!source) return "text";
   try {
-    JSON.parse(source);
-    return "json";
+    const parsed = JSON.parse(source);
+    if (parsed && typeof parsed === "object") return "json";
   } catch {}
   if (/^(?:<!doctype|<\?xml|<[\w:-]+[\s>])/i.test(source)) return "html";
   if (/^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+\S+/m.test(source)) return "http";
@@ -2726,7 +3128,7 @@ function detectCodeLanguage(code) {
   if (/^\s*(?:def|class)\s+\w+|^\s*(?:from\s+\S+\s+import|import\s+\S+)|\bprint\(/m.test(source)) return "python";
   if (/\b(?:public|private|protected)\s+(?:static\s+)?(?:class|void|String|int|boolean)\b/.test(source)) return "java";
   if (/[.#][\w-]+\s*\{[^}]*:[^}]*\}/s.test(source)) return "css";
-  if (/^[\w.-]+:\s+\S+/m.test(source) && !/[{};]/.test(source)) return "yaml";
+  if (source.includes("\n") && /^[\w.-]+:\s+\S+/m.test(source) && !/[{};]/.test(source)) return "yaml";
   return "text";
 }
 
@@ -3034,6 +3436,85 @@ async function downloadImage(image) {
   }
 }
 
+function activeStorageProviders() {
+  return [
+    storageSettings.yandex.enabled ? { id: "yandex", label: "Яндекс.Диск" } : null,
+    storageSettings.google.enabled ? { id: "google", label: "Google Drive" } : null,
+  ].filter(Boolean);
+}
+
+function blobToDataBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function imageToUploadFile(image) {
+  const response = await fetch(image.src);
+  const blob = await response.blob();
+  return {
+    name: image.dataset.fileName || image.dataset.jiraName || `image.${blob.type.split("/")[1]?.replace("jpeg", "jpg") || "png"}`,
+    type: image.dataset.mimeType || blob.type || "image/png",
+    dataBase64: await blobToDataBase64(blob),
+  };
+}
+
+function replaceImageWithLink(figure, url, label) {
+  const editor = figure.closest(".cell-editor, .intro-editor");
+  const paragraph = document.createElement("p");
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = label;
+  paragraph.append(link);
+  figure.replaceWith(paragraph);
+  editor?.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function uploadImageToStorage(figure, provider) {
+  const image = figure.querySelector("img");
+  if (!image) return;
+  const providerName = provider === "yandex" ? "Яндекс.Диск" : "Google Drive";
+  const token = storageSecrets[provider] || "";
+  if (!token) {
+    setSettingsSection("files");
+    fillStorageSettingsForm();
+    elements.jiraSettingsModal.hidden = false;
+    document.body.style.overflow = "hidden";
+    showToast(`Укажите токен для ${providerName} в настройках`, 4500);
+    return;
+  }
+  showToast(`Загружаем изображение в ${providerName}...`, 3500);
+  try {
+    await checkBackendCompatibility();
+    const file = await imageToUploadFile(image);
+    const response = await fetch("/api/storage/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider,
+        token,
+        yandexPath: storageSettings.yandex.path,
+        googleFolderId: storageSettings.google.folderId,
+        file,
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    assertCurrentBackend(result);
+    if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+    const url = result.publicUrl || result.webViewLink || result.url;
+    if (!url) throw new Error("Хранилище не вернуло ссылку на файл");
+    replaceImageWithLink(figure, url, `${file.name} (${providerName})`);
+    showToast(`Изображение загружено в ${providerName}`);
+  } catch (error) {
+    showToast(`Не удалось загрузить в ${providerName}: ${error.message}`, 6000);
+  }
+}
+
 function enhanceImageControls(root = document) {
   root.querySelectorAll(".cell-image").forEach((figure) => {
     ensureMediaBoundaries(figure);
@@ -3100,7 +3581,13 @@ function setImageAlignment(figure, alignment) {
 
 function showImageMenu(figure, anchor = figure) {
   selectImage(figure);
+  const storageActions = activeStorageProviders().map((provider) => ({
+    label: `Загрузить в ${provider.label}`,
+    icon: "download",
+    action: () => uploadImageToStorage(figure, provider.id),
+  }));
   showFloatingMenu(anchor, [
+    ...storageActions,
     { label: "Скачать изображение", icon: "download", action: () => downloadImage(figure.querySelector("img")) },
     { label: "Выровнять слева", icon: "align-left", action: () => setImageAlignment(figure, "left") },
     { label: "Выровнять по центру", icon: "align-center", action: () => setImageAlignment(figure, "center") },
@@ -3434,6 +3921,344 @@ async function copyVisualReport() {
   showToast("Визуальная таблица скопирована");
 }
 
+const XLSX_STATUS_STYLES = {
+  OK: 5,
+  "НЕ ОК": 6,
+  "ПОЧТИ ОК": 7,
+  "НЕ ПРОВЕРЕНО": 8,
+  "ЧАСТИЧНО ПРОВЕРЕНО": 9,
+  "ТРЕБУЕТ УТОЧНЕНИЯ": 10,
+};
+
+function xlsxEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function columnName(index) {
+  let value = "";
+  let current = index;
+  while (current > 0) {
+    const mod = (current - 1) % 26;
+    value = String.fromCharCode(65 + mod) + value;
+    current = Math.floor((current - mod) / 26);
+  }
+  return value;
+}
+
+function createSharedStringStore() {
+  const values = [];
+  const indexByValue = new Map();
+  return {
+    add(value) {
+      const text = String(value ?? "");
+      if (!indexByValue.has(text)) {
+        indexByValue.set(text, values.length);
+        values.push(text);
+      }
+      return indexByValue.get(text);
+    },
+    xml() {
+      const items = values.map((value) => `<si><t xml:space="preserve">${xlsxEscape(value)}</t></si>`).join("");
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${values.length}" uniqueCount="${values.length}">${items}</sst>`;
+    },
+  };
+}
+
+function xlsxCell(ref, value, styleId, sharedStrings) {
+  const style = styleId ? ` s="${styleId}"` : "";
+  return `<c r="${ref}" t="s"${style}><v>${sharedStrings.add(value)}</v></c>`;
+}
+
+function xlsxRow(index, cells, options = {}) {
+  const height = options.height ? ` ht="${options.height}" customHeight="1"` : "";
+  return `<row r="${index}"${height}>${cells.join("")}</row>`;
+}
+
+function estimateXlsxRowHeight(values, columns) {
+  const maxLines = values.reduce((max, value, index) => {
+    const width = Math.max(10, columns[index]?.width || 18);
+    const explicitLines = String(value || "").split("\n");
+    const estimated = explicitLines.reduce(
+      (sum, line) => sum + Math.max(1, Math.ceil(line.length / Math.max(12, width * 1.05))),
+      0,
+    );
+    return Math.max(max, estimated);
+  }, 1);
+  return Math.min(360, Math.max(22, 17 + (maxLines - 1) * 15));
+}
+
+function getXlsxStatusStyle(status) {
+  return XLSX_STATUS_STYLES[status] || XLSX_STATUS_STYLES["НЕ ПРОВЕРЕНО"];
+}
+
+function buildXlsxWorksheet() {
+  collectDocumentFields();
+  const sharedStrings = createSharedStringStore();
+  const rows = [];
+  const merges = [];
+  let rowIndex = 1;
+  const maxDynamicColumns = draft.sections.reduce((max, section) => Math.max(max, section.columns.length), 0);
+  const exportDynamicColumns = Math.max(4, maxDynamicColumns);
+  const totalColumns = exportDynamicColumns + 2;
+  const lastColumn = columnName(totalColumns);
+  const bodyColumns = [
+    { width: 7 },
+    ...Array.from({ length: exportDynamicColumns }, (_, index) => {
+      const widths = draft.sections
+        .map((section) => Number(section.columns[index]?.width) || 240)
+        .filter(Boolean);
+      const px = widths.length ? Math.max(...widths) : 240;
+      return { width: Math.max(20, Math.min(56, Math.round(px / 7))) };
+    }),
+    { width: 24 },
+  ];
+  const columnXml = bodyColumns
+    .map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`)
+    .join("");
+
+  rows.push(xlsxRow(rowIndex, [xlsxCell("A1", "QA Report — чек-лист", 1, sharedStrings)], { height: 28 }));
+  merges.push(`A${rowIndex}:${lastColumn}${rowIndex}`);
+  rowIndex += 1;
+
+  rows.push(
+    xlsxRow(
+      rowIndex,
+      [
+        xlsxCell(`A${rowIndex}`, "Задача", 12, sharedStrings),
+        xlsxCell(`B${rowIndex}`, draft.issueUrl || "Не указана", 13, sharedStrings),
+        xlsxCell(`D${rowIndex}`, "Окружение", 12, sharedStrings),
+        xlsxCell(`E${rowIndex}`, draft.environment || "Не указано", 13, sharedStrings),
+        xlsxCell(`F${rowIndex}`, draft.overallStatus || "НЕ ПРОВЕРЕНО", getXlsxStatusStyle(draft.overallStatus), sharedStrings),
+      ],
+      { height: 22 },
+    ),
+  );
+  merges.push(`B${rowIndex}:C${rowIndex}`);
+  rowIndex += 1;
+
+  const intro = htmlToSpreadsheetText(draft.intro);
+  if (intro) {
+    rowIndex += 1;
+    rows.push(xlsxRow(rowIndex, [xlsxCell(`A${rowIndex}`, "Вводный текст", 2, sharedStrings)]));
+    merges.push(`A${rowIndex}:${lastColumn}${rowIndex}`);
+    rowIndex += 1;
+    rows.push(
+      xlsxRow(rowIndex, [xlsxCell(`A${rowIndex}`, intro, 3, sharedStrings)], {
+        height: estimateXlsxRowHeight([intro], [{ width: totalColumns * 18 }]),
+      }),
+    );
+    merges.push(`A${rowIndex}:${lastColumn}${rowIndex}`);
+    rowIndex += 1;
+  }
+
+  draft.sections.forEach((section) => {
+    const contentRows = section.rows.filter(hasRowContent);
+    if (!contentRows.length) return;
+    rowIndex += 2;
+    rows.push(xlsxRow(rowIndex, [xlsxCell(`A${rowIndex}`, section.title || "Раздел", 4, sharedStrings)], { height: 24 }));
+    merges.push(`A${rowIndex}:${lastColumn}${rowIndex}`);
+    rowIndex += 1;
+
+    const headers = [
+      "№",
+      ...Array.from({ length: exportDynamicColumns }, (_, index) => section.columns[index]?.title || ""),
+      "Статус",
+    ];
+    rows.push(
+      xlsxRow(
+        rowIndex,
+        headers.map((header, index) => xlsxCell(`${columnName(index + 1)}${rowIndex}`, header, 2, sharedStrings)),
+        { height: 22 },
+      ),
+    );
+    rowIndex += 1;
+
+    contentRows.forEach((row, index) => {
+      const cellContent = Array.from({ length: exportDynamicColumns }, (_, columnIndex) => {
+        const column = section.columns[columnIndex];
+        const html = column ? row.cells[column.id] || "" : "";
+        return {
+          value: column ? htmlToSpreadsheetText(html) : "",
+          code: /<pre[\s>]/i.test(html),
+        };
+      });
+      const values = [
+        `${index + 1}.`,
+        ...cellContent.map((cell) => cell.value),
+        row.status || "НЕ ПРОВЕРЕНО",
+      ];
+      const cells = values.map((value, cellIndex) => {
+        const ref = `${columnName(cellIndex + 1)}${rowIndex}`;
+        const isStatus = cellIndex === values.length - 1;
+        const isCode = cellIndex > 0 && cellIndex < values.length - 1 && cellContent[cellIndex - 1]?.code;
+        return xlsxCell(
+          ref,
+          value,
+          isStatus ? getXlsxStatusStyle(row.status) : cellIndex === 0 ? 11 : isCode ? 14 : 3,
+          sharedStrings,
+        );
+      });
+      rows.push(xlsxRow(rowIndex, cells, { height: estimateXlsxRowHeight(values, bodyColumns) }));
+      rowIndex += 1;
+    });
+  });
+
+  const mergeXml = merges.length
+    ? `<mergeCells count="${merges.length}">${merges.map((ref) => `<mergeCell ref="${ref}"/>`).join("")}</mergeCells>`
+    : "";
+  const sheetXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="18"/><cols>${columnXml}</cols><sheetData>${rows.join("")}</sheetData>` +
+    `${mergeXml}<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
+  return { sheetXml, sharedStringsXml: sharedStrings.xml() };
+}
+
+function xlsxStylesXml() {
+  const fillColors = [
+    "FFFFFF",
+    "1F4E78",
+    "D9EAF7",
+    "263238",
+    "D9EAD3",
+    "F4CCCC",
+    "D9EAF7",
+    "EADCF8",
+    "FCE5CD",
+    "FFF2CC",
+    "F6F8FA",
+  ];
+  const fills = fillColors
+    .map((color) => `<fill><patternFill patternType="solid"><fgColor rgb="FF${color}"/><bgColor indexed="64"/></patternFill></fill>`)
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="5"><font><sz val="11"/><color rgb="FF172B4D"/><name val="Calibri"/></font><font><b/><sz val="16"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FF172B4D"/><name val="Calibri"/></font><font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><sz val="10"/><color rgb="FF172B4D"/><name val="Consolas"/></font></fonts><fills count="${fillColors.length + 2}"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${fills}</fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFD0D7DE"/></left><right style="thin"><color rgb="FFD0D7DE"/></right><top style="thin"><color rgb="FFD0D7DE"/></top><bottom style="thin"><color rgb="FFD0D7DE"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="15"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="3" fillId="5" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="6" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="7" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="8" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="9" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="10" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="11" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"><alignment horizontal="center" vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="4" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"><alignment vertical="center" shrinkToFit="1"/></xf><xf numFmtId="0" fontId="4" fillId="12" borderId="1" xfId="0" applyFill="1" applyFont="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+}
+
+function crc32(bytes) {
+  let crc = -1;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+function writeUint16(output, value) {
+  output.push(value & 0xff, (value >>> 8) & 0xff);
+}
+
+function writeUint32(output, value) {
+  output.push(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff);
+}
+
+function createZip(files) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  files.forEach((file) => {
+    const nameBytes = encoder.encode(file.name);
+    const dataBytes = encoder.encode(file.content);
+    const checksum = crc32(dataBytes);
+    const local = [];
+    writeUint32(local, 0x04034b50);
+    writeUint16(local, 20);
+    writeUint16(local, 0);
+    writeUint16(local, 0);
+    writeUint16(local, 0);
+    writeUint16(local, 0);
+    writeUint32(local, checksum);
+    writeUint32(local, dataBytes.length);
+    writeUint32(local, dataBytes.length);
+    writeUint16(local, nameBytes.length);
+    writeUint16(local, 0);
+    chunks.push(new Uint8Array(local), nameBytes, dataBytes);
+    const centralEntry = [];
+    writeUint32(centralEntry, 0x02014b50);
+    writeUint16(centralEntry, 20);
+    writeUint16(centralEntry, 20);
+    writeUint16(centralEntry, 0);
+    writeUint16(centralEntry, 0);
+    writeUint16(centralEntry, 0);
+    writeUint16(centralEntry, 0);
+    writeUint32(centralEntry, checksum);
+    writeUint32(centralEntry, dataBytes.length);
+    writeUint32(centralEntry, dataBytes.length);
+    writeUint16(centralEntry, nameBytes.length);
+    writeUint16(centralEntry, 0);
+    writeUint16(centralEntry, 0);
+    writeUint16(centralEntry, 0);
+    writeUint16(centralEntry, 0);
+    writeUint32(centralEntry, 0);
+    writeUint32(centralEntry, offset);
+    central.push(new Uint8Array(centralEntry), nameBytes);
+    offset += local.length + nameBytes.length + dataBytes.length;
+  });
+  const centralSize = central.reduce((sum, item) => sum + item.length, 0);
+  const end = [];
+  writeUint32(end, 0x06054b50);
+  writeUint16(end, 0);
+  writeUint16(end, 0);
+  writeUint16(end, files.length);
+  writeUint16(end, files.length);
+  writeUint32(end, centralSize);
+  writeUint32(end, offset);
+  writeUint16(end, 0);
+  return new Blob([...chunks, ...central, new Uint8Array(end)], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+}
+
+function buildChecklistXlsxBlob() {
+  const { sheetXml, sharedStringsXml } = buildXlsxWorksheet();
+  const now = new Date().toISOString();
+  return createZip([
+    { name: "[Content_Types].xml", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>` },
+    { name: "_rels/.rels", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>` },
+    { name: "docProps/app.xml", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>QA Report</Application></Properties>` },
+    { name: "docProps/core.xml", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>QA Report</dc:creator><cp:lastModifiedBy>QA Report</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified></cp:coreProperties>` },
+    { name: "xl/workbook.xml", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Чек-лист" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+    { name: "xl/_rels/workbook.xml.rels", content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>` },
+    { name: "xl/worksheets/sheet1.xml", content: sheetXml },
+    { name: "xl/styles.xml", content: xlsxStylesXml() },
+    { name: "xl/sharedStrings.xml", content: sharedStringsXml },
+  ]);
+}
+
+function safeExportFilename() {
+  const issueKey = issueKeyFromUrl(draft.issueUrl) || "checklist";
+  return `${issueKey}-${new Date().toISOString().slice(0, 10)}.xlsx`
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-");
+}
+
+function exportChecklistXlsx() {
+  if (!draft.sections.some((section) => section.rows.some(hasRowContent))) {
+    showToast("Добавьте хотя бы одну заполненную строку");
+    return;
+  }
+  try {
+    const blob = buildChecklistXlsxBlob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = safeExportFilename();
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast("XLSX-файл сформирован");
+  } catch (error) {
+    console.error("Ошибка экспорта XLSX:", error);
+    showToast(`Не удалось экспортировать XLSX: ${error.message}`, 5000);
+  }
+}
+
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -3454,7 +4279,7 @@ function showToast(message, duration = 2500) {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (!elements.themeToggle) return;
-  const iconMap = { light: "#icon-sun", graphite: "#icon-graphite", dark: "#icon-moon" };
+  const iconMap = { light: "#icon-sun", graphite: "#icon-corporate", dark: "#icon-moon" };
   elements.themeToggle.querySelector(".theme-icon use")?.setAttribute(
     "href",
     iconMap[theme] || "#icon-moon",
@@ -3990,6 +4815,7 @@ elements.feedbackDropzone.addEventListener("drop", async (event) => {
 });
 elements.copyButton.addEventListener("click", copyMarkup);
 elements.copyVisualButton.addEventListener("click", copyVisualReport);
+elements.exportXlsxButton.addEventListener("click", exportChecklistXlsx);
 elements.modalCopyButton.addEventListener("click", copyPreviewMarkup);
 elements.modalCopyVisualButton.addEventListener("click", copyVisualReport);
 elements.modalSaveMarkupButton.addEventListener("click", savePreviewMarkupToDraft);
@@ -4098,13 +4924,18 @@ elements.focusModeButton.addEventListener("click", () => {
   setFocusMode(enabled);
 });
 elements.focusExitButton.addEventListener("click", () => setFocusMode(false));
-elements.jiraSettingsButton.addEventListener("click", openJiraSettings);
+elements.settingsButton.addEventListener("click", openJiraSettings);
 elements.closeJiraSettingsButton.addEventListener("click", closeJiraSettings);
 elements.saveJiraSettingsButton.addEventListener("click", saveJiraSettings);
 elements.testJiraButton.addEventListener("click", testJiraConnection);
 elements.publishButton.addEventListener("click", publishToJira);
 elements.jiraType.addEventListener("change", updateJiraSettingsLabels);
 elements.jiraAuthMethod.addEventListener("change", updateJiraSettingsLabels);
+elements.settingsJiraSectionButton.addEventListener("click", () => setSettingsSection("jira"));
+elements.settingsFilesSectionButton.addEventListener("click", () => setSettingsSection("files"));
+elements.jiraManualTab.addEventListener("click", () => setJiraSettingsTab("manual"));
+elements.jiraCurlTab.addEventListener("click", () => setJiraSettingsTab("curl"));
+elements.parseJiraCurlButton.addEventListener("click", applyJiraCurlSettings);
 elements.themeToggle.addEventListener("click", (e) => {
   e.stopPropagation();
   const menu = document.getElementById("themeMenu");

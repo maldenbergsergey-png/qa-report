@@ -13,7 +13,13 @@ async function main() {
     const body = request.headers["content-type"]?.includes("application/json")
       ? JSON.parse(rawBody.toString("utf8") || "{}")
       : rawBody;
-    received.push({ url: request.url, method: request.method, authorization: request.headers.authorization, body });
+    received.push({
+      url: request.url,
+      method: request.method,
+      authorization: request.headers.authorization,
+      cookie: request.headers.cookie,
+      body,
+    });
     response.setHeader("Content-Type", "application/json");
     if (request.url === "/rest/api/2/issue/QA-999/comment?maxResults=100") {
       response.setHeader("Content-Type", "text/html; charset=UTF-8");
@@ -153,6 +159,23 @@ async function main() {
       basicTestRequest.authorization,
       `Basic ${Buffer.from("legacy-user:legacy-password").toString("base64")}`,
     );
+
+    const cookieResponse = await fetch("http://127.0.0.1:4174/api/jira/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "data-center",
+        authMethod: "cookie",
+        baseUrl: "http://127.0.0.1:4199",
+        token: "JSESSIONID=session-from-curl; atlassian.xsrf.token=xsrf",
+      }),
+    });
+    assert.equal(cookieResponse.status, 200);
+    const cookieTestRequest = received
+      .filter((item) => item.url === "/rest/api/2/myself")
+      .find((item) => item.cookie?.includes("JSESSIONID=session-from-curl"));
+    assert.equal(cookieTestRequest.authorization, undefined);
+    assert.equal(cookieTestRequest.cookie, "JSESSIONID=session-from-curl; atlassian.xsrf.token=xsrf");
 
     const fallbackResponse = await fetch("http://127.0.0.1:4174/api/jira/comment", {
       method: "POST",
