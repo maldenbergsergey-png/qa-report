@@ -32,7 +32,7 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
 const MAX_BODY = 30 * 1024 * 1024;
 const APP_VERSION = "0.2.2";
-const API_REVISION = 4;
+const API_REVISION = 5;
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
 const feedbackRateLimit = new Map();
 
@@ -59,6 +59,7 @@ const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
+  ".gif": "image/gif",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
 };
@@ -95,8 +96,9 @@ function normalizeConnection(input) {
   baseUrl.pathname = baseUrl.pathname.replace(/\/+$/, "");
   const token = String(input.token || "");
   const user = String(input.user || "");
-  const authMethod = type === "cloud" ? "api-token" : input.authMethod === "basic" ? "basic" : "pat";
-  if (!token) throw new Error(authMethod === "basic" ? "Пароль не указан" : "Токен не указан");
+  const authMethod =
+    type === "cloud" ? "api-token" : input.authMethod === "basic" || input.authMethod === "cookie" ? input.authMethod : "pat";
+  if (!token) throw new Error(authMethod === "basic" ? "Пароль не указан" : authMethod === "cookie" ? "Cookie не указан" : "Токен не указан");
   if ((type === "cloud" || authMethod === "basic") && !user) {
     throw new Error(type === "cloud" ? "Email Atlassian не указан" : "Логин Jira не указан");
   }
@@ -104,6 +106,9 @@ function normalizeConnection(input) {
 }
 
 function authHeaders(connection) {
+  if (connection.authMethod === "cookie") {
+    return { Cookie: connection.token };
+  }
   if (connection.type === "cloud" || connection.authMethod === "basic") {
     const credentials = Buffer.from(`${connection.user}:${connection.token}`).toString("base64");
     return { Authorization: `Basic ${credentials}` };
@@ -114,15 +119,30 @@ function authHeaders(connection) {
 async function jiraFetch(connection, pathname, options = {}) {
   const { returnMeta = false, ...fetchOptions } = options;
   const isFormData = typeof FormData !== "undefined" && fetchOptions.body instanceof FormData;
-  const response = await fetch(`${connection.baseUrl}${pathname}`, {
-    ...fetchOptions,
-    headers: {
-      Accept: "application/json",
-      ...authHeaders(connection),
-      ...(fetchOptions.body && !isFormData ? { "Content-Type": "application/json" } : {}),
-      ...(fetchOptions.headers || {}),
-    },
-  });
+  const targetUrl = `${connection.baseUrl}${pathname}`;
+  let response;
+  try {
+    response = await fetch(targetUrl, {
+      ...fetchOptions,
+      headers: {
+        Accept: "application/json",
+        ...authHeaders(connection),
+        ...(fetchOptions.body && !isFormData ? { "Content-Type": "application/json" } : {}),
+        ...(fetchOptions.headers || {}),
+      },
+    });
+  } catch (fetchError) {
+    const reason = fetchError.cause?.message || fetchError.message || "неизвестная ошибка сети";
+    const error = new Error(
+      `Не удалось подключиться к Jira ${connection.baseUrl}: ${reason}. ` +
+        "Проверьте, что Node-сервер приложения видит Jira: VPN, DNS, корпоративный proxy и TLS-сертификаты.",
+    );
+    error.status = 502;
+    error.code = fetchError.cause?.code || fetchError.code || "JIRA_FETCH_FAILED";
+    error.pathname = pathname;
+    error.targetUrl = targetUrl;
+    throw error;
+  }
   const text = await response.text();
   const contentType = response.headers.get("content-type") || "";
   const looksLikeHtml =
@@ -298,6 +318,162 @@ function decodeImageFile(file, index) {
     type: detectedType,
     name: sanitizeAttachmentName(file.name, detectedType, index),
   };
+}
+
+function safeStorageFilename(name, mimeType) {
+  return sanitizeAttachmentName(name, mimeType || "image/png", 0).replace(/^image-1(\.[a-z0-9]+)$/i, `image-${Date.now()}$1`);
+}
+
+async function storageFetch(url, options = {}) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { message: text };
+  }
+  if (!response.ok) {
+    const details = payload.message || payload.error_description || payload.error || response.statusText;
+    const error = new Error(`${response.status}: ${details}`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+function normalizeYandexFolder(value) {
+  const pathValue = String(value || "/QA Report").trim() || "/QA Report";
+  return `/${pathValue.replace(/^\/+|\/+$/g, "")}`;
+}
+
+async function ensureYandexFolder(token, folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let current = "";
+  for (const part of parts) {
+    current += `/${part}`;
+    const url = new URL("https://cloud-api.yandex.net/v1/disk/resources");
+    url.searchParams.set("path", current);
+    const response = await fetch(url, { method: "PUT", headers: { Authorization: `OAuth ${token}` } });
+    if (response.ok || response.status === 409) continue;
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(`Не удалось создать папку Яндекс.Диска ${current}: ${payload.message || response.statusText}`);
+  }
+}
+
+async function uploadToYandexDisk({ token, folderPath, file }) {
+  const folder = normalizeYandexFolder(folderPath);
+  await ensureYandexFolder(token, folder);
+  const targetPath = `${folder}/${file.name}`;
+  const uploadUrl = new URL("https://cloud-api.yandex.net/v1/disk/resources/upload");
+  uploadUrl.searchParams.set("path", targetPath);
+  uploadUrl.searchParams.set("overwrite", "true");
+  const uploadLink = await storageFetch(uploadUrl, {
+    headers: { Authorization: `OAuth ${token}` },
+  });
+  if (!uploadLink.href) throw new Error("Яндекс.Диск не вернул адрес загрузки");
+  const uploadResponse = await fetch(uploadLink.href, {
+    method: uploadLink.method || "PUT",
+    headers: { "Content-Type": file.type },
+    body: file.bytes,
+  });
+  if (!uploadResponse.ok) throw new Error(`Яндекс.Диск не принял файл: HTTP ${uploadResponse.status}`);
+  const publishUrl = new URL("https://cloud-api.yandex.net/v1/disk/resources/publish");
+  publishUrl.searchParams.set("path", targetPath);
+  await storageFetch(publishUrl, {
+    method: "PUT",
+    headers: { Authorization: `OAuth ${token}` },
+  });
+  const metaUrl = new URL("https://cloud-api.yandex.net/v1/disk/resources");
+  metaUrl.searchParams.set("path", targetPath);
+  metaUrl.searchParams.set("fields", "name,public_url,path");
+  const meta = await storageFetch(metaUrl, {
+    headers: { Authorization: `OAuth ${token}` },
+  });
+  return {
+    provider: "yandex",
+    name: meta.name || file.name,
+    publicUrl: meta.public_url,
+    path: meta.path || targetPath,
+  };
+}
+
+function multipartBody(parts, boundary) {
+  const chunks = [];
+  parts.forEach((part) => {
+    chunks.push(Buffer.from(`--${boundary}\r\n${part.headers}\r\n\r\n`));
+    chunks.push(Buffer.isBuffer(part.body) ? part.body : Buffer.from(String(part.body)));
+    chunks.push(Buffer.from("\r\n"));
+  });
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return Buffer.concat(chunks);
+}
+
+async function uploadToGoogleDrive({ token, folderId, file }) {
+  const metadata = {
+    name: file.name,
+    ...(folderId ? { parents: [folderId] } : {}),
+  };
+  const boundary = `qa-report-${crypto.randomUUID()}`;
+  const body = multipartBody(
+    [
+      {
+        headers: "Content-Type: application/json; charset=UTF-8",
+        body: JSON.stringify(metadata),
+      },
+      {
+        headers: `Content-Type: ${file.type}`,
+        body: file.bytes,
+      },
+    ],
+    boundary,
+  );
+  const upload = await storageFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+      "Content-Length": String(body.length),
+    },
+    body,
+  });
+  if (!upload.id) throw new Error("Google Drive не вернул ID файла");
+  await storageFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(upload.id)}/permissions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ role: "reader", type: "anyone" }),
+  });
+  const meta = await storageFetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(upload.id)}?fields=id,name,webViewLink,webContentLink`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return {
+    provider: "google",
+    id: meta.id,
+    name: meta.name || file.name,
+    publicUrl: meta.webViewLink || upload.webViewLink || meta.webContentLink || upload.webContentLink,
+  };
+}
+
+async function handleStorageUpload(request, response) {
+  const body = await readJson(request);
+  const provider = body.provider === "google" ? "google" : body.provider === "yandex" ? "yandex" : "";
+  if (!provider) throw new Error("Выберите хранилище: yandex или google");
+  const token = String(body.token || "").trim();
+  if (!token) throw new Error("Токен хранилища не указан");
+  const decoded = decodeImageFile(body.file || {}, 0);
+  const file = {
+    ...decoded,
+    name: safeStorageFilename(body.file?.name || decoded.name, decoded.type),
+  };
+  const result =
+    provider === "yandex"
+      ? await uploadToYandexDisk({ token, folderPath: body.yandexPath, file })
+      : await uploadToGoogleDrive({ token, folderId: String(body.googleFolderId || "").trim(), file });
+  if (!result.publicUrl) throw new Error("Хранилище загрузило файл, но не вернуло публичную ссылку");
+  sendJson(response, 200, { ok: true, ...result });
 }
 
 async function handleJiraTest(request, response) {
@@ -707,27 +883,32 @@ function serveStatic(request, response) {
 
 const server = http.createServer(async (request, response) => {
   try {
-    if (request.method === "GET" && request.url === "/api/health") {
+    const requestPath = new URL(request.url, "http://localhost").pathname;
+    if (request.method === "GET" && requestPath === "/api/health") {
       sendJson(response, 200, { ok: true, service: "qa-report" });
       return;
     }
-    if (request.method === "POST" && request.url === "/api/jira/test") {
+    if (request.method === "POST" && requestPath === "/api/jira/test") {
       await handleJiraTest(request, response);
       return;
     }
-    if (request.method === "POST" && request.url === "/api/jira/comment") {
+    if (request.method === "POST" && requestPath === "/api/jira/comment") {
       await handleJiraComment(request, response);
       return;
     }
-    if (request.method === "POST" && request.url === "/api/jira/import-comment") {
+    if (request.method === "POST" && requestPath === "/api/jira/import-comment") {
       await handleJiraImportComment(request, response);
       return;
     }
-    if (request.method === "POST" && request.url === "/api/jira/attachments") {
+    if (request.method === "POST" && requestPath === "/api/jira/attachments") {
       await handleJiraAttachments(request, response);
       return;
     }
-    if (request.method === "POST" && request.url === "/api/feedback") {
+    if (request.method === "POST" && requestPath === "/api/storage/upload") {
+      await handleStorageUpload(request, response);
+      return;
+    }
+    if (request.method === "POST" && requestPath === "/api/feedback") {
       await handleFeedback(request, response);
       return;
     }

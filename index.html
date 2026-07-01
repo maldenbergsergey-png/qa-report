@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=34" />
+    <link rel="stylesheet" href="./styles.css?v=41" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -28,7 +28,8 @@
       <symbol id="icon-list-ordered" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11" /><path d="M4 5h1v4M3.5 9h3M3.5 11.5h2.2c.8 0 1.3.5 1.3 1.2 0 .5-.2.9-.7 1.3l-2.8 2.5H7M4 18h1.6c.8 0 1.4.4 1.4 1.1 0 .6-.4 1-1.2 1.1.9.1 1.4.5 1.4 1.2 0 .8-.6 1.2-1.5 1.2H4" /></symbol>
       <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z" /></symbol>
       <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
-      <symbol id="icon-graphite" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" /><path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" /></symbol>
+      <symbol id="icon-circle-half" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18" /></symbol>
+      <symbol id="icon-corporate" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="5" /><path d="M8 8h8v8H8z" /><path d="M10 4v4M14 16v4M4 10h4M16 14h4" /></symbol>
       <symbol id="icon-life-buoy" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /><path d="m5.6 5.6 4.3 4.3M14.1 14.1l4.3 4.3M18.4 5.6l-4.3 4.3M9.9 14.1l-4.3 4.3" /></symbol>
       <symbol id="icon-bug" viewBox="0 0 24 24"><path d="M8 6.5A4 4 0 0 1 16 6.5M9 3 7.5 1.5M15 3l1.5-1.5M8 9h8v6a4 4 0 0 1-8 0V9ZM4 10h4M16 10h4M4 15h4M16 15h4M6 20l2.5-2.5M18 20l-2.5-2.5M12 9v10" /></symbol>
       <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></symbol>
@@ -43,7 +44,9 @@
       <header class="topbar">
         <div class="header-brand-group">
           <a class="brand" href="#" aria-label="QA Report">
-            <span class="brand-mark">QA</span>
+            <span class="brand-mark">
+              <img src="./logo-qa.svg" alt="" />
+            </span>
             <span class="brand-copy">
               <strong>QA Report</strong>
               <small>Редактор чек-листов</small>
@@ -63,7 +66,7 @@
                 <span>Светлая</span>
               </button>
               <button class="theme-menu-item" data-theme="graphite" type="button" role="menuitem">
-                <svg class="ui-icon" aria-hidden="true"><use href="#icon-graphite"></use></svg>
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-circle-half"></use></svg>
                 <span>Графитовая</span>
               </button>
               <button class="theme-menu-item" data-theme="dark" type="button" role="menuitem">
@@ -121,11 +124,6 @@
                 <svg class="ui-icon primary-action-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
                 <span class="primary-action-label">Отправить в Jira</span>
               </button>
-              <div class="header-dropdown-divider"></div>
-              <button class="header-dropdown-item" id="jiraSettingsButton" type="button" role="menuitem">
-                <svg class="ui-icon" aria-hidden="true"><use href="#icon-settings"></use></svg>
-                <span>Настройки интеграции</span>
-              </button>
             </div>
           </div>
 
@@ -144,8 +142,15 @@
                 <svg class="ui-icon" aria-hidden="true"><use href="#icon-code"></use></svg>
                 <span>Jira-разметку</span>
               </button>
+              <button class="header-dropdown-item" id="exportXlsxButton" type="button" role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+                <span>Excel XLSX</span>
+              </button>
             </div>
           </div>
+          <button class="header-icon-button" id="settingsButton" type="button" title="Настройки" aria-label="Настройки">
+            <svg class="ui-icon" aria-hidden="true"><use href="#icon-settings"></use></svg>
+          </button>
         </div>
       </header>
 
@@ -267,18 +272,6 @@
             contenteditable="true"
             data-placeholder="Добавьте вводный текст: что проверялось, сборка, важные условия…"
           ></div>
-
-          <div class="section-sticky" id="sectionSticky" hidden aria-live="polite">
-            <div class="section-sticky-title" id="sectionStickyTitle"></div>
-            <div class="section-sticky-scroll" id="sectionStickyScroll">
-              <table class="check-table section-sticky-table">
-                <colgroup id="sectionStickyColgroup"></colgroup>
-                <thead>
-                  <tr id="sectionStickyHeader"></tr>
-                </thead>
-              </table>
-            </div>
-          </div>
 
           <div class="sections" id="sections"></div>
 
@@ -534,43 +527,120 @@
       <section class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="jiraSettingsTitle">
         <header class="modal-header">
           <div>
-            <div class="eyebrow">Интеграция</div>
-            <h2 id="jiraSettingsTitle">Подключение к Jira</h2>
+            <div class="eyebrow">Настройки</div>
+            <h2 id="jiraSettingsTitle">Интеграции</h2>
           </div>
-          <button class="icon-button" id="closeJiraSettingsButton" type="button" aria-label="Закрыть настройки Jira">×</button>
+          <button class="icon-button" id="closeJiraSettingsButton" type="button" aria-label="Закрыть настройки">×</button>
         </header>
-        <div class="settings-body">
-          <div class="settings-note">
-            Токен или пароль хранится только в памяти открытой вкладки и исчезнет после перезагрузки.
-            Остальные настройки сохраняются локально в браузере.
+        <div class="settings-layout">
+          <nav class="settings-sidebar" aria-label="Разделы настроек">
+            <button class="settings-nav-item active" id="settingsJiraSectionButton" type="button" data-settings-section="jira">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
+              <span>Jira</span>
+            </button>
+            <button class="settings-nav-item" id="settingsFilesSectionButton" type="button" data-settings-section="files">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-paperclip"></use></svg>
+              <span>Файлы</span>
+            </button>
+          </nav>
+          <div class="settings-body">
+            <section class="settings-section active" id="settingsJiraSection" data-settings-panel="jira">
+              <div class="settings-note">
+                Токен или пароль хранится только в памяти открытой вкладки и исчезнет после перезагрузки.
+                Остальные настройки сохраняются локально в браузере.
+              </div>
+              <div class="settings-tabs" role="tablist" aria-label="Способ настройки Jira">
+                <button class="settings-tab active" id="jiraManualTab" data-jira-settings-tab="manual" type="button" role="tab" aria-selected="true" aria-controls="jiraManualPane">Вручную</button>
+                <button class="settings-tab" id="jiraCurlTab" data-jira-settings-tab="curl" type="button" role="tab" aria-selected="false" aria-controls="jiraCurlPane">Из curl</button>
+              </div>
+              <div class="settings-pane" id="jiraManualPane" role="tabpanel" aria-labelledby="jiraManualTab">
+                <label class="field">
+                  <span>Тип Jira</span>
+                  <select id="jiraType">
+                    <option value="data-center">Data Center / Server</option>
+                    <option value="cloud">Cloud</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Адрес Jira</span>
+                  <input id="jiraBaseUrl" type="url" placeholder="https://jira.company.ru" />
+                </label>
+                <label class="field" id="jiraAuthMethodField">
+                  <span>Способ авторизации</span>
+                  <select id="jiraAuthMethod">
+                    <option value="pat">Personal Access Token</option>
+                    <option value="basic">Логин и пароль</option>
+                    <option value="cookie">Cookie из curl</option>
+                  </select>
+                </label>
+                <label class="field" id="jiraUserField">
+                  <span id="jiraUserLabel">Имя пользователя</span>
+                  <input id="jiraUser" type="text" autocomplete="username" placeholder="username" />
+                </label>
+                <label class="field">
+                  <span id="jiraTokenLabel">Personal Access Token</span>
+                  <input id="jiraToken" type="password" autocomplete="off" placeholder="Токен не сохраняется" />
+                </label>
+              </div>
+              <div class="settings-pane" id="jiraCurlPane" role="tabpanel" aria-labelledby="jiraCurlTab" hidden>
+                <label class="field">
+                  <span>curl-запрос из Jira</span>
+                  <textarea id="jiraCurlInput" class="settings-curl-input" spellcheck="false" placeholder="curl 'https://jira.company.ru/rest/api/2/issue/QA-123/comment' -H 'Authorization: Bearer ...'"></textarea>
+                </label>
+                <p class="settings-curl-hint">
+                  Можно вставить curl с Bearer, Basic, -u user:password или Cookie. Секрет из curl будет применён только в текущей вкладке.
+                </p>
+                <div class="settings-curl-state" id="jiraCurlState" hidden></div>
+                <button class="button button-secondary" id="parseJiraCurlButton" type="button">
+                  Разобрать и сохранить
+                </button>
+              </div>
+              <div class="connection-state" id="jiraConnectionState">Соединение ещё не проверялось.</div>
+            </section>
+            <section class="settings-section" id="settingsFilesSection" data-settings-panel="files" hidden>
+              <div class="settings-note">
+                Облачные токены используются только сервером приложения для загрузки выбранного изображения.
+                В браузере сохраняются только признаки активности и папка; сам токен действует до перезагрузки вкладки.
+              </div>
+              <div class="storage-grid">
+                <section class="storage-card">
+                  <label class="storage-toggle">
+                    <input id="yandexStorageEnabled" type="checkbox" />
+                    <span>Яндекс.Диск активен</span>
+                  </label>
+                  <label class="field">
+                    <span>OAuth-токен Яндекса</span>
+                    <input id="yandexStorageToken" type="password" autocomplete="off" placeholder="Не сохраняется в браузере" />
+                  </label>
+                  <label class="field">
+                    <span>Папка на Диске</span>
+                    <input id="yandexStoragePath" type="text" placeholder="/QA Report" />
+                  </label>
+                  <p class="settings-curl-hint">
+                    Создайте OAuth-токен для Яндекс.Диска с доступом к REST API Диска. Укажите папку, куда будут попадать изображения.
+                  </p>
+                </section>
+                <section class="storage-card">
+                  <label class="storage-toggle">
+                    <input id="googleStorageEnabled" type="checkbox" />
+                    <span>Google Drive активен</span>
+                  </label>
+                  <label class="field">
+                    <span>OAuth access token Google</span>
+                    <input id="googleStorageToken" type="password" autocomplete="off" placeholder="Не сохраняется в браузере" />
+                  </label>
+                  <label class="field">
+                    <span>ID папки Google Drive</span>
+                    <input id="googleStorageFolder" type="text" placeholder="Например, 1AbCdEf..." />
+                  </label>
+                  <p class="settings-curl-hint">
+                    Получите access token с областью доступа Drive File или Drive. ID папки берётся из адреса открытой папки Google Drive.
+                  </p>
+                </section>
+              </div>
+              <div class="connection-state" id="storageConnectionState">Настройки файлового хранилища ещё не сохранялись.</div>
+            </section>
           </div>
-          <label class="field">
-            <span>Тип Jira</span>
-            <select id="jiraType">
-              <option value="data-center">Data Center / Server</option>
-              <option value="cloud">Cloud</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Адрес Jira</span>
-            <input id="jiraBaseUrl" type="url" placeholder="https://jira.company.ru" />
-          </label>
-          <label class="field" id="jiraAuthMethodField">
-            <span>Способ авторизации</span>
-            <select id="jiraAuthMethod">
-              <option value="pat">Personal Access Token</option>
-              <option value="basic">Логин и пароль</option>
-            </select>
-          </label>
-          <label class="field" id="jiraUserField">
-            <span id="jiraUserLabel">Имя пользователя</span>
-            <input id="jiraUser" type="text" autocomplete="username" placeholder="username" />
-          </label>
-          <label class="field">
-            <span id="jiraTokenLabel">Personal Access Token</span>
-            <input id="jiraToken" type="password" autocomplete="off" placeholder="Токен не сохраняется" />
-          </label>
-          <div class="connection-state" id="jiraConnectionState">Соединение ещё не проверялось.</div>
         </div>
         <footer class="modal-footer">
           <button class="button button-secondary" id="testJiraButton" type="button">
@@ -587,21 +657,28 @@
 
     <template id="sectionTemplate">
       <section class="check-section">
-        <header class="section-header">
-          <div class="drag-handle" title="Перетащить раздел" aria-label="Перетащить раздел">⋮⋮</div>
-          <input class="section-title" type="text" placeholder="Название раздела" />
-          <div class="section-actions">
-            <button class="icon-button move-section-up" type="button" title="Поднять раздел">↑</button>
-            <button class="icon-button move-section-down" type="button" title="Опустить раздел">↓</button>
-            <button class="icon-button collapse-section" type="button" title="Свернуть раздел">⌃</button>
-            <button class="icon-button delete-section danger" type="button" title="Удалить раздел">×</button>
+        <div class="section-sticky-block">
+          <header class="section-header">
+            <div class="drag-handle" title="Перетащить раздел" aria-label="Перетащить раздел">⋮⋮</div>
+            <input class="section-title" type="text" placeholder="Название раздела" />
+            <div class="section-actions">
+              <button class="icon-button move-section-up" type="button" title="Поднять раздел">↑</button>
+              <button class="icon-button move-section-down" type="button" title="Опустить раздел">↓</button>
+              <button class="icon-button collapse-section" type="button" title="Свернуть раздел">⌃</button>
+              <button class="icon-button delete-section danger" type="button" title="Удалить раздел">×</button>
+            </div>
+          </header>
+          <div class="section-header-scroll" aria-hidden="false">
+            <table class="section-header-table">
+              <colgroup></colgroup>
+              <thead><tr></tr></thead>
+            </table>
           </div>
-        </header>
+        </div>
         <div class="section-content">
           <div class="table-scroll">
             <table class="check-table">
               <colgroup></colgroup>
-              <thead><tr></tr></thead>
               <tbody></tbody>
             </table>
           </div>
@@ -610,6 +687,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=40"></script>
+    <script src="./app.js?v=44"></script>
   </body>
 </html>
