@@ -6,6 +6,7 @@ const DB_VERSION = 1;
 const REPORT_STORE = "reports";
 const HISTORY_LIMIT = 50;
 const REQUIRED_API_REVISION = 5;
+const FILE_ATTACHMENT_MAX_SIZE = 15 * 1024 * 1024;
 
 const STATUS_META = {
   OK: { className: "status-ok", color: "#22a06b", jiraColor: "#14892c" },
@@ -67,11 +68,6 @@ const elements = {
   reportCard: document.querySelector(".report-card"),
   introEditor: document.querySelector("#introEditor"),
   sections: document.querySelector("#sections"),
-  sectionSticky: document.querySelector("#sectionSticky"),
-  sectionStickyTitle: document.querySelector("#sectionStickyTitle"),
-  sectionStickyScroll: document.querySelector("#sectionStickyScroll"),
-  sectionStickyColgroup: document.querySelector("#sectionStickyColgroup"),
-  sectionStickyHeader: document.querySelector("#sectionStickyHeader"),
   sectionTemplate: document.querySelector("#sectionTemplate"),
   addSectionButton: document.querySelector("#addSectionButton"),
   previewButton: document.querySelector("#previewButton"),
@@ -157,6 +153,7 @@ const elements = {
   codeButton: document.querySelector("#codeButton"),
   imageButton: document.querySelector("#imageButton"),
   imageInput: document.querySelector("#imageInput"),
+  fileInput: document.querySelector("#fileInput"),
   commentImportUrl: document.querySelector("#commentImportUrl"),
   markupImportPane: document.querySelector("#markupImportPane"),
   commentImportPane: document.querySelector("#commentImportPane"),
@@ -223,8 +220,6 @@ let pointerObjectGesture = null;
 const suppressObjectOpenUntil = new WeakMap();
 let editingCodeBlock = null;
 let codeEditorInitialValue = "";
-let activeStickySectionId = "";
-let stickyScrollSyncing = false;
 let stickyUpdateFrame = 0;
 let linkEditorRange = null;
 let editingLink = null;
@@ -478,6 +473,7 @@ function render() {
   elements.introEditor.querySelectorAll("figcaption").forEach((caption) => caption.remove());
   highlightCodeBlocks(elements.introEditor);
   enhanceImageControls(elements.introEditor);
+  enhanceFileControls(elements.introEditor);
   draft.intro = cleanEditorHtml(elements.introEditor);
   renderSections();
   renderSummary();
@@ -502,6 +498,7 @@ function renderSections() {
     fragment.querySelector(".collapse-section").addEventListener("click", () => {
       section.collapsed = !section.collapsed;
       sectionElement.classList.toggle("collapsed", section.collapsed);
+      scheduleStickySectionUpdate();
       scheduleSave();
     });
     fragment.querySelector(".move-section-up").addEventListener("click", () => moveSection(section.id, -1));
@@ -517,6 +514,7 @@ function renderSections() {
     elements.sections.append(fragment);
     highlightCodeBlocks(sectionElement);
     enhanceImageControls(sectionElement);
+    enhanceFileControls(sectionElement);
   });
   scheduleStickySectionUpdate();
 }
@@ -524,167 +522,75 @@ function renderSections() {
 function renderTable(fragment, section) {
   const table = fragment.querySelector(".check-table");
   const tableScroll = fragment.querySelector(".table-scroll");
-  const colgroup = fragment.querySelector("colgroup");
-  const header = fragment.querySelector("thead tr");
-  const numberCol = document.createElement("col");
-  numberCol.className = "number-col";
-  colgroup.append(numberCol);
+  const headerTable = fragment.querySelector(".section-header-table");
+  const headerScroll = fragment.querySelector(".section-header-scroll");
+  const bodyColgroup = table.querySelector("colgroup");
+  const headerColgroup = headerTable.querySelector("colgroup");
+  const header = headerTable.querySelector("thead tr");
+  bodyColgroup.append(createColumnElement("number-col"));
+  headerColgroup.append(createColumnElement("number-col"));
   header.append(createHeader("№"));
 
   let totalWidth = 52 + 164 + 46;
   section.columns.forEach((column, index) => {
     column.width = Math.max(140, Number(column.width) || 240);
-    const col = document.createElement("col");
-    col.className = "dynamic-col";
-    col.style.width = `${column.width}px`;
-    colgroup.append(col);
+    bodyColgroup.append(createColumnElement("dynamic-col", column.width));
+    headerColgroup.append(createColumnElement("dynamic-col", column.width));
     const th = createColumnHeader(section, column, index);
     th.dataset.columnId = column.id;
     header.append(th);
     totalWidth += column.width;
   });
 
-  const statusCol = document.createElement("col");
-  statusCol.className = "status-col";
-  const actionsCol = document.createElement("col");
-  actionsCol.className = "actions-col";
-  colgroup.append(statusCol, actionsCol);
+  bodyColgroup.append(createColumnElement("status-col"), createColumnElement("actions-col"));
+  headerColgroup.append(createColumnElement("status-col"), createColumnElement("actions-col"));
   header.append(createStatusHeader(section), createHeader(""));
   table.style.width = `${totalWidth}px`;
   table.style.minWidth = "100%";
+  headerTable.style.width = `${totalWidth}px`;
+  headerTable.style.minWidth = "100%";
 
   const tbody = fragment.querySelector("tbody");
   section.rows.forEach((row, index) => tbody.append(createRowElement(section, row, index)));
-  tableScroll?.addEventListener("scroll", () => syncStickyScrollFromSection(section.id, tableScroll));
+  tableScroll?.addEventListener("scroll", () => {
+    if (headerScroll) headerScroll.scrollLeft = tableScroll.scrollLeft;
+    scheduleStickySectionUpdate();
+  });
+}
+
+function createColumnElement(className, width = null) {
+  const col = document.createElement("col");
+  col.className = className;
+  if (width !== null) col.style.width = `${width}px`;
+  return col;
 }
 
 function getSectionTableWidth(section) {
   return 52 + 164 + 46 + section.columns.reduce((sum, item) => sum + (Number(item.width) || 240), 0);
 }
 
-function createStickyColumn(width, className = "") {
-  const col = document.createElement("col");
-  if (className) col.className = className;
-  col.style.width = `${width}px`;
-  return col;
-}
-
-function createStickyHeaderCell(label, className = "") {
-  const th = document.createElement("th");
-  if (className) th.className = className;
-  th.textContent = label;
-  return th;
-}
-
-function renderSectionSticky(section, sectionElement) {
-  if (!section || !sectionElement || section.collapsed) {
-    elements.sectionSticky.hidden = true;
-    activeStickySectionId = "";
-    return;
-  }
-  positionSectionSticky(sectionElement);
-  const tableScroll = sectionElement.querySelector(".table-scroll");
-  const tableWidth = getSectionTableWidth(section);
-  activeStickySectionId = section.id;
-  elements.sectionSticky.hidden = false;
-  elements.sectionStickyTitle.textContent = section.title || "Раздел";
-  elements.sectionStickyColgroup.innerHTML = "";
-  elements.sectionStickyHeader.innerHTML = "";
-  elements.sectionStickyColgroup.append(createStickyColumn(52, "number-col"));
-  elements.sectionStickyHeader.append(createStickyHeaderCell("№"));
-  section.columns.forEach((column) => {
-    const width = Math.max(140, Number(column.width) || 240);
-    elements.sectionStickyColgroup.append(createStickyColumn(width, "dynamic-col"));
-    elements.sectionStickyHeader.append(createStickyHeaderCell(column.title || "Без названия"));
-  });
-  elements.sectionStickyColgroup.append(createStickyColumn(164, "status-col"), createStickyColumn(46, "actions-col"));
-  elements.sectionStickyHeader.append(createStickyHeaderCell("Статус", "status-header"), createStickyHeaderCell(""));
-  const table = elements.sectionSticky.querySelector(".section-sticky-table");
-  table.style.width = `${tableWidth}px`;
-  table.style.minWidth = "100%";
-  syncStickyScrollFromSection(section.id, tableScroll);
-}
-
 function getStickyOffset() {
   const toolbarRect = document.querySelector(".editor-toolbar")?.getBoundingClientRect();
-  return Math.max(0, toolbarRect?.bottom || 0) + 10;
+  return Math.max(0, toolbarRect?.bottom || 0) + 8;
 }
 
-function positionSectionSticky(sectionElement = null) {
-  if (!elements.sectionSticky || !elements.reportCard) return;
-  const targetRect =
-    sectionElement?.querySelector(".table-scroll")?.getBoundingClientRect() || elements.reportCard.getBoundingClientRect();
-  const left = Math.max(12, targetRect.left);
-  const borderCompensation = 2;
-  elements.sectionSticky.style.top = `${getStickyOffset()}px`;
-  elements.sectionSticky.style.left = `${left}px`;
-  elements.sectionSticky.style.width = `${Math.max(
-    320,
-    Math.min(targetRect.width + borderCompensation, window.innerWidth - left - 12),
-  )}px`;
-}
-
-function getActiveSectionForSticky() {
-  const sectionElements = [...elements.sections.querySelectorAll(".check-section")].filter(
-    (sectionElement) => !sectionElement.classList.contains("collapsed"),
-  );
-  if (!sectionElements.length) return null;
-  const marker = getStickyOffset() + 64;
-  let activeElement = null;
-  for (const sectionElement of sectionElements) {
-    const rect = sectionElement.getBoundingClientRect();
-    if (rect.top <= marker && rect.bottom > marker) {
-      activeElement = sectionElement;
-      break;
-    }
-    if (rect.top <= marker) activeElement = sectionElement;
-  }
-  if (!activeElement) return null;
-  const section = draft.sections.find((item) => item.id === activeElement.dataset.sectionId);
-  return section ? { section, sectionElement: activeElement } : null;
+function updateStickyOffsets() {
+  const stickyTop = getStickyOffset();
+  document.documentElement.style.setProperty("--section-sticky-top", `${stickyTop}px`);
+  elements.sections?.querySelectorAll(".section-sticky-block").forEach((stickyBlock) => {
+    const rect = stickyBlock.getBoundingClientRect();
+    stickyBlock.classList.toggle("is-pushed-out", rect.top < stickyTop - 1);
+  });
 }
 
 function updateStickySection() {
   stickyUpdateFrame = 0;
-  if (!elements.sectionSticky) return;
-  const active = getActiveSectionForSticky();
-  if (!active) {
-    elements.sectionSticky.hidden = true;
-    activeStickySectionId = "";
-    return;
-  }
-  positionSectionSticky(active.sectionElement);
-  if (active.section.id !== activeStickySectionId || elements.sectionSticky.hidden) {
-    renderSectionSticky(active.section, active.sectionElement);
-    return;
-  }
-  syncStickyScrollFromSection(active.section.id, active.sectionElement.querySelector(".table-scroll"));
+  updateStickyOffsets();
 }
 
 function scheduleStickySectionUpdate() {
   if (stickyUpdateFrame) return;
   stickyUpdateFrame = requestAnimationFrame(updateStickySection);
-}
-
-function syncStickyScrollFromSection(sectionId, tableScroll) {
-  if (!tableScroll || elements.sectionSticky.hidden || activeStickySectionId !== sectionId || stickyScrollSyncing) return;
-  stickyScrollSyncing = true;
-  elements.sectionStickyScroll.scrollLeft = tableScroll.scrollLeft;
-  requestAnimationFrame(() => {
-    stickyScrollSyncing = false;
-  });
-}
-
-function syncActiveSectionScrollFromSticky() {
-  if (stickyScrollSyncing || !activeStickySectionId) return;
-  const sectionElement = elements.sections.querySelector(`[data-section-id="${activeStickySectionId}"]`);
-  const tableScroll = sectionElement?.querySelector(".table-scroll");
-  if (!tableScroll) return;
-  stickyScrollSyncing = true;
-  tableScroll.scrollLeft = elements.sectionStickyScroll.scrollLeft;
-  requestAnimationFrame(() => {
-    stickyScrollSyncing = false;
-  });
 }
 
 function createHeader(content, html = false) {
@@ -796,12 +702,8 @@ function startColumnResize(event, section, column) {
     const col = sectionElement?.querySelector(`th[data-column-id="${column.id}"]`);
     if (!col) return;
     const colIndex = [...col.parentElement.children].indexOf(col);
-    const colElement = sectionElement.querySelector(`colgroup`).children[colIndex];
-    colElement.style.width = `${column.width}px`;
-    const table = sectionElement.querySelector(".check-table");
     const total = 52 + 164 + 46 + section.columns.reduce((sum, item) => sum + (Number(item.width) || 240), 0);
-    table.style.width = `${total}px`;
-    if (activeStickySectionId === section.id) renderSectionSticky(section, sectionElement);
+    updateSectionColumnLayout(sectionElement, colIndex, column.width, total);
   };
   const onUp = () => {
     document.removeEventListener("pointermove", onMove);
@@ -810,6 +712,16 @@ function startColumnResize(event, section, column) {
   };
   document.addEventListener("pointermove", onMove);
   document.addEventListener("pointerup", onUp);
+}
+
+function updateSectionColumnLayout(sectionElement, columnIndex, columnWidth, tableWidth) {
+  sectionElement.querySelectorAll("colgroup").forEach((colgroup) => {
+    const colElement = colgroup.children[columnIndex];
+    if (colElement) colElement.style.width = `${columnWidth}px`;
+  });
+  sectionElement.querySelectorAll(".check-table, .section-header-table").forEach((table) => {
+    table.style.width = `${tableWidth}px`;
+  });
 }
 
 function createStatusHeader(section) {
@@ -1200,6 +1112,12 @@ function htmlToSpreadsheetText(html) {
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     if (node.matches?.("[data-editor-ui]")) return;
+    if (node.matches?.(".cell-file")) {
+      const name = node.dataset.jiraName || node.dataset.fileName || "файл";
+      const link = node.dataset.jiraUrl || "";
+      append(link ? `[Файл: ${name}] ${link}` : `[Файл: ${name}]`);
+      return;
+    }
     const tag = node.tagName.toLowerCase();
     if (tag === "br") {
       newline();
@@ -1260,6 +1178,7 @@ function htmlToWiki(html) {
   function walk(node) {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent;
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    if (node.matches?.(".cell-file")) return fileCardToWiki(node);
     const tag = node.tagName.toLowerCase();
     if ((tag === "span" && node.style.color) || (tag === "font" && node.getAttribute("color"))) {
       const content = [...node.childNodes].map(walk).join("");
@@ -1338,6 +1257,11 @@ function jiraCell(value) {
     protectedBlocks.push(block);
     return token;
   });
+  content = content.replace(/\[[^\]\r\n]+\|https?:\/\/[^\]\r\n]+\]/g, (block) => {
+    const token = `@@JIRA_LINK_${protectedBlocks.length}@@`;
+    protectedBlocks.push(block);
+    return token;
+  });
   // Если перед image-макросом оставить Jira-перенос `\\`, Jira перестаёт
   // распознавать изображение и воспринимает `|thumbnail` как новую ячейку.
   // Поэтому только на границе текста и изображения используем обычный пробел.
@@ -1353,7 +1277,7 @@ function jiraCell(value) {
       return count > 1 ? "\n\u00a0\n" : "\n";
     });
   content = content.replace(
-    /@@JIRA_(?:PROTECTED|IMAGE)_(\d+)@@/g,
+    /@@JIRA_(?:PROTECTED|IMAGE|LINK)_(\d+)@@/g,
     (_, index) => protectedBlocks[Number(index)] || "",
   );
   return content.trim() ? content : " ";
@@ -1859,6 +1783,9 @@ function previewEditorHtml(html) {
   container.querySelectorAll(".cell-image").forEach((figure) => {
     figure.classList.remove("image-selected");
     figure.removeAttribute("tabindex");
+  });
+  container.querySelectorAll(".cell-file").forEach((card) => {
+    card.removeAttribute("tabindex");
   });
   return container.innerHTML;
 }
@@ -2386,7 +2313,7 @@ async function checkBackendCompatibility() {
 }
 
 async function uploadPendingImages(settings, issue) {
-  const files = collectLocalImages();
+  const files = [...collectLocalImages(), ...collectLocalFiles()];
   if (!files.length) return [];
   elements.publishButton.textContent = `Вложения 0/${files.length}`;
   const result = await jiraRequest("/api/jira/attachments", {
@@ -2637,6 +2564,9 @@ function cleanEditorHtml(editor) {
     figure.removeAttribute("draggable");
     figure.removeAttribute("tabindex");
   });
+  clone.querySelectorAll(".cell-file").forEach((card) => {
+    card.removeAttribute("tabindex");
+  });
   return clone.innerHTML;
 }
 
@@ -2821,10 +2751,12 @@ function getCodeColumnContext(block) {
 
 function applyColumnWidth(context, width) {
   context.column.width = Math.max(140, Math.min(1000, Math.round(width)));
-  context.sectionElement.querySelector("colgroup").children[context.columnIndex].style.width =
-    `${context.column.width}px`;
-  const table = context.sectionElement.querySelector(".check-table");
-  table.style.width = `${52 + 164 + 46 + context.section.columns.reduce((sum, item) => sum + (Number(item.width) || 240), 0)}px`;
+  updateSectionColumnLayout(
+    context.sectionElement,
+    context.columnIndex,
+    context.column.width,
+    52 + 164 + 46 + context.section.columns.reduce((sum, item) => sum + (Number(item.width) || 240), 0),
+  );
   scheduleSave();
 }
 
@@ -3359,7 +3291,7 @@ async function sendFeedback() {
 async function insertImages(files) {
   if (!activeEditor?.matches(".cell-editor, .intro-editor")) return;
   for (const file of [...files]) {
-    if (!file.type.startsWith("image/")) continue;
+    if (!isImageLikeFile(file)) continue;
     if (file.size > 10 * 1024 * 1024) {
       showToast(`Файл ${file.name} больше 10 МБ`);
       continue;
@@ -3371,6 +3303,175 @@ async function insertImages(files) {
     );
   }
   enhanceImageControls(activeEditor);
+}
+
+function getFileExtension(name = "", mimeType = "") {
+  const extension = String(name || "").split(".").pop();
+  if (extension && extension !== name) return extension.slice(0, 8).toUpperCase();
+  const subtype = String(mimeType || "").split("/")[1] || "FILE";
+  return subtype.replace(/[^a-z0-9]+/gi, "").slice(0, 8).toUpperCase() || "FILE";
+}
+
+function isImageLikeFile(file) {
+  if (file.type?.startsWith("image/")) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i.test(file.name || "");
+}
+
+function formatFileSize(size) {
+  const bytes = Number(size) || 0;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1)} МБ`;
+  if (bytes >= 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+  return `${bytes} Б`;
+}
+
+function createFileCardHtml({ id, name, type, size, dataUrl }) {
+  const extension = getFileExtension(name, type);
+  return (
+    `<figure class="cell-file" contenteditable="false" tabindex="0" ` +
+    `data-attachment-id="${escapeHtml(id)}" ` +
+    `data-file-name="${escapeHtml(name)}" ` +
+    `data-file-extension="${escapeHtml(extension)}" ` +
+    `data-mime-type="${escapeHtml(type || "application/octet-stream")}" ` +
+    `data-file-size="${escapeHtml(String(size || 0))}" ` +
+    `data-data-url="${escapeHtml(dataUrl)}">` +
+    `<span class="file-type-badge">${escapeHtml(extension)}</span>` +
+    `<span class="file-card-body">` +
+    `<strong class="file-card-name" title="${escapeHtml(name)}">${escapeHtml(name)}</strong>` +
+    `<span class="file-card-meta">${escapeHtml(formatFileSize(size))}</span>` +
+    `</span>` +
+    `</figure><p><br></p>`
+  );
+}
+
+async function insertFiles(files) {
+  if (!activeEditor?.matches(".cell-editor, .intro-editor")) return;
+  for (const file of [...files]) {
+    if (isImageLikeFile(file)) continue;
+    if (file.size > FILE_ATTACHMENT_MAX_SIZE) {
+      showToast(`Файл «${file.name}» больше ${formatFileSize(FILE_ATTACHMENT_MAX_SIZE)}`);
+      continue;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      insertHtmlAtCursor(
+        createFileCardHtml({
+          id: crypto.randomUUID(),
+          name: file.name || `file-${Date.now()}`,
+          type: file.type || "application/octet-stream",
+          size: file.size,
+          dataUrl,
+        }),
+      );
+    } catch {
+      showToast(`Не удалось прочитать файл «${file.name || "без названия"}»`);
+    }
+  }
+  enhanceFileControls(activeEditor);
+}
+
+async function insertAttachments(files) {
+  const list = [...files];
+  const images = list.filter(isImageLikeFile);
+  const ordinaryFiles = list.filter((file) => !isImageLikeFile(file));
+  if (images.length) await insertImages(images);
+  if (ordinaryFiles.length) await insertFiles(ordinaryFiles);
+}
+
+function fileCardToWiki(card) {
+  const name = card.dataset.jiraName || card.dataset.fileName || "file";
+  const url = card.dataset.jiraUrl || "";
+  return url ? `[${name}|${url}]` : `[Файл: ${name}]`;
+}
+
+function extractFileCardHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = html || "";
+  const card = template.content.querySelector(".cell-file");
+  if (!card) return "";
+  card.querySelectorAll("[data-editor-ui]").forEach((item) => item.remove());
+  card.classList.remove("file-selected");
+  card.contentEditable = "false";
+  card.removeAttribute("tabindex");
+  return `${card.outerHTML}<p><br></p>`;
+}
+
+async function downloadFileCard(card) {
+  try {
+    const dataUrl = card.dataset.dataUrl || card.dataset.jiraUrl || "";
+    if (!dataUrl) throw new Error("У файла нет локальных данных");
+    const link = document.createElement("a");
+    link.href = dataUrl;
+    link.download = card.dataset.fileName || card.dataset.jiraName || "file";
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } catch {
+    showToast("Не удалось скачать файл");
+  }
+}
+
+async function copyFileLink(card) {
+  const clone = card.cloneNode(true);
+  clone.querySelectorAll("[data-editor-ui]").forEach((item) => item.remove());
+  clone.classList.remove("file-selected");
+  clone.removeAttribute("tabindex");
+  const html = `${clone.outerHTML}<p><br></p>`;
+  const plain = card.dataset.fileName || card.dataset.jiraName || "Файл";
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+      throw new Error("Расширенный буфер обмена не поддерживается");
+    }
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/plain": new Blob([plain], { type: "text/plain" }),
+        "text/html": new Blob([html], { type: "text/html" }),
+      }),
+    ]);
+    showToast("Файл скопирован");
+  } catch {
+    await writeClipboardText(plain, "Имя файла скопировано");
+  }
+}
+
+function showFileMenu(card, anchor = card) {
+  showFloatingMenu(anchor, [
+    { label: "Скачать файл", icon: "download", action: () => downloadFileCard(card) },
+  ]);
+}
+
+function enhanceFileControls(root = document) {
+  root.querySelectorAll(".cell-file").forEach((card) => {
+    ensureMediaBoundaries(card);
+    card.querySelectorAll(":scope > [data-editor-ui]").forEach((item) => item.remove());
+    const name = card.dataset.fileName || card.dataset.jiraName || "Файл";
+    card.tabIndex = 0;
+    card.setAttribute("aria-label", `Файл ${name}`);
+    const nameNode = card.querySelector(".file-card-name");
+    if (nameNode) nameNode.title = name;
+    const controls = document.createElement("span");
+    controls.className = "object-action-panel file-controls";
+    controls.dataset.editorUi = "true";
+    controls.contentEditable = "false";
+    controls.append(
+      createObjectActionButton({
+        icon: "copy",
+        title: "Копировать файл",
+        action: () => copyFileLink(card),
+      }),
+      createObjectActionButton({
+        icon: "trash",
+        title: "Удалить файл",
+        className: "object-action-danger",
+        action: () => deleteEditorObject(card, "Файл удалён — отменить можно через Ctrl/Cmd+Z"),
+      }),
+      createObjectActionButton({
+        icon: "more",
+        title: "Ещё действия",
+        action: (_event, button) => showFileMenu(card, button),
+      }),
+    );
+    card.append(controls);
+  });
 }
 
 async function imageToPngBlob(image) {
@@ -3569,6 +3670,7 @@ function selectImage(figure) {
     if (item !== figure) item.classList.remove("image-selected");
   });
   document.querySelectorAll(".cell-code-block.code-selected").forEach((item) => item.classList.remove("code-selected"));
+  document.querySelectorAll(".cell-file.file-selected").forEach((item) => item.classList.remove("file-selected"));
   figure.classList.add("image-selected");
   figure.tabIndex = 0;
   figure.focus({ preventScroll: true });
@@ -3723,6 +3825,42 @@ function collectLocalImages() {
   return images;
 }
 
+function collectLocalFiles() {
+  const files = [];
+  const collectFromHtml = (html, location) => {
+    const container = document.createElement("div");
+    container.innerHTML = html || "";
+    container.querySelectorAll(".cell-file[data-attachment-id]").forEach((card) => {
+      if (card.dataset.jiraUrl) return;
+      const dataUrl = card.dataset.dataUrl || "";
+      const [, dataBase64 = ""] = dataUrl.split(",");
+      if (!dataBase64) return;
+      files.push({
+        attachmentId: card.dataset.attachmentId,
+        name: card.dataset.fileName || "file",
+        type: card.dataset.mimeType || "application/octet-stream",
+        size: Number(card.dataset.fileSize) || 0,
+        dataBase64,
+        ...location,
+      });
+    });
+  };
+  collectFromHtml(draft.intro, { location: "intro" });
+  for (const section of draft.sections) {
+    for (const row of section.rows) {
+      for (const [columnId, html] of Object.entries(row.cells)) {
+        collectFromHtml(html, {
+          location: "cell",
+          sectionId: section.id,
+          rowId: row.id,
+          columnId,
+        });
+      }
+    }
+  }
+  return files;
+}
+
 function collectCurrentAttachments() {
   const attachments = [];
   const seen = new Set();
@@ -3738,6 +3876,17 @@ function collectCurrentAttachments() {
         id: image.dataset.jiraId || image.dataset.attachmentId || "",
         content: image.dataset.jiraUrl || image.src || "",
         thumbnail: image.dataset.jiraThumbnail || image.src || "",
+      });
+    });
+    container.querySelectorAll(".cell-file").forEach((card) => {
+      const filename = card.dataset.jiraName || card.dataset.fileName || "file";
+      if (seen.has(filename)) return;
+      seen.add(filename);
+      attachments.push({
+        filename,
+        id: card.dataset.jiraId || card.dataset.attachmentId || "",
+        content: card.dataset.jiraUrl || "",
+        thumbnail: "",
       });
     });
   };
@@ -3763,6 +3912,14 @@ function applyUploadedAttachments(uploaded) {
       image.dataset.jiraId = uploadedFile.id || "";
       image.dataset.jiraUrl = uploadedFile.content || "";
       if (uploadedFile.thumbnail) image.dataset.jiraThumbnail = uploadedFile.thumbnail;
+      changed = true;
+    });
+    container.querySelectorAll(".cell-file[data-attachment-id]").forEach((card) => {
+      const uploadedFile = byLocalId.get(card.dataset.attachmentId);
+      if (!uploadedFile) return;
+      card.dataset.jiraName = uploadedFile.filename || card.dataset.fileName;
+      card.dataset.jiraId = uploadedFile.id || "";
+      card.dataset.jiraUrl = uploadedFile.content || "";
       changed = true;
     });
     return changed ? container.innerHTML : html;
@@ -4279,7 +4436,7 @@ function showToast(message, duration = 2500) {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (!elements.themeToggle) return;
-  const iconMap = { light: "#icon-sun", graphite: "#icon-corporate", dark: "#icon-moon" };
+  const iconMap = { light: "#icon-sun", graphite: "#icon-circle-half", dark: "#icon-moon" };
   elements.themeToggle.querySelector(".theme-icon use")?.setAttribute(
     "href",
     iconMap[theme] || "#icon-moon",
@@ -4539,10 +4696,27 @@ elements.codeButton.addEventListener("pointerdown", (event) => {
   event.preventDefault();
 });
 elements.codeButton.addEventListener("click", insertCodeBlock);
-elements.imageButton.addEventListener("click", () => elements.imageInput.click());
+elements.imageButton.addEventListener("pointerdown", () => {
+  const selection = window.getSelection();
+  if (selection?.rangeCount && activeEditor?.contains(selection.anchorNode)) {
+    savedEditorRange = selection.getRangeAt(0).cloneRange();
+  }
+});
+elements.imageButton.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  showFloatingMenu(elements.imageButton, [
+    { label: "Изображение", icon: "paperclip", action: () => elements.imageInput.click() },
+    { label: "Файл", icon: "paperclip", action: () => elements.fileInput.click() },
+  ]);
+});
 elements.imageInput.addEventListener("change", async () => {
-  await insertImages(elements.imageInput.files);
+  await insertAttachments(elements.imageInput.files);
   elements.imageInput.value = "";
+});
+elements.fileInput.addEventListener("change", async () => {
+  await insertAttachments(elements.fileInput.files);
+  elements.fileInput.value = "";
 });
 document.addEventListener("paste", async (event) => {
   const pasteTarget = event.target;
@@ -4591,15 +4765,28 @@ document.addEventListener("paste", async (event) => {
   }
   const editor = event.target.closest?.(".cell-editor, .intro-editor") || activeEditor;
   if (!editor?.matches(".cell-editor, .intro-editor")) return;
-  const images = [...(event.clipboardData?.files || [])].filter((file) => file.type.startsWith("image/"));
-  if (images.length) {
+  const pastedFiles = [...(event.clipboardData?.files || [])];
+  if (pastedFiles.length) {
     event.preventDefault();
     activeEditor = editor;
-    await insertImages(images);
+    await insertAttachments(pastedFiles);
     return;
   }
   const html = event.clipboardData?.getData("text/html") || "";
   const plainText = event.clipboardData?.getData("text/plain") || "";
+  const fileCardHtml = extractFileCardHtml(html);
+  if (fileCardHtml) {
+    event.preventDefault();
+    activeEditor = editor;
+    const selection = window.getSelection();
+    const range =
+      selection?.rangeCount && editor.contains(selection.anchorNode)
+        ? selection.getRangeAt(0).cloneRange()
+        : null;
+    insertHtmlAtSelection(fileCardHtml, range);
+    enhanceFileControls(editor);
+    return;
+  }
   let snippet = parseCodeFromClipboard(html, plainText);
   if (!snippet && looksLikeCode(plainText)) {
     const code = formatCode(plainText);
@@ -4670,7 +4857,18 @@ document.addEventListener("pointerdown", (event) => {
     return;
   }
   const figure = event.target.closest(".cell-image");
-  if (!figure) return;
+  if (!figure) {
+    const fileCard = event.target.closest(".cell-file");
+    if (fileCard && !event.target.closest("[data-editor-ui]")) {
+      pointerObjectGesture = {
+        object: fileCard,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      };
+    }
+    return;
+  }
   const rect = figure.getBoundingClientRect();
   const onResizeHandle = rect.right - event.clientX <= 18 && rect.bottom - event.clientY <= 18;
   if (onResizeHandle) {
@@ -4726,8 +4924,24 @@ document.addEventListener("click", (event) => {
     }
     return;
   }
+  const fileCard = event.target.closest(".cell-file");
+  if (fileCard && !event.target.closest("[data-editor-ui]")) {
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelectorAll(".cell-file.file-selected").forEach((item) => {
+      if (item !== fileCard) item.classList.remove("file-selected");
+    });
+    document.querySelectorAll(".cell-image.image-selected").forEach((item) => item.classList.remove("image-selected"));
+    document.querySelectorAll(".cell-code-block.code-selected").forEach((item) => item.classList.remove("code-selected"));
+    fileCard.classList.add("file-selected");
+    fileCard.focus({ preventScroll: true });
+    return;
+  }
   document.querySelectorAll(".cell-image.image-selected").forEach((item) => {
     item.classList.remove("image-selected");
+  });
+  document.querySelectorAll(".cell-file.file-selected").forEach((item) => {
+    item.classList.remove("file-selected");
   });
   document.querySelectorAll(".cell-code-block.code-selected").forEach((item) => {
     item.classList.remove("code-selected");
@@ -4983,7 +5197,7 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest(".toolbar-color-wrap") && !elements.textColorMenu.hidden) {
     closeTextColorMenu();
   }
-  if (!event.target.closest(".floating-context-menu, .row-menu-button, .column-menu-button, .cell-image, .cell-code-block")) {
+  if (!event.target.closest(".floating-context-menu, .row-menu-button, .column-menu-button, .cell-image, .cell-file, .cell-code-block")) {
     closeFloatingMenu();
   }
 });
@@ -5017,28 +5231,29 @@ window.addEventListener("scroll", () => {
   closeFloatingMenu();
   scheduleStickySectionUpdate();
 }, true);
-elements.sectionStickyScroll?.addEventListener("scroll", syncActiveSectionScrollFromSticky);
 document.addEventListener("keydown", (event) => {
   const focusedObject = document.activeElement;
   if (
     (event.key === "Enter" || event.key === " ") &&
-    focusedObject?.matches?.(".cell-code-block, .cell-image") &&
+    focusedObject?.matches?.(".cell-code-block, .cell-image, .cell-file") &&
     event.target === focusedObject
   ) {
     event.preventDefault();
     if (focusedObject.matches(".cell-code-block")) openCodeEditor(focusedObject);
-    else openMediaViewer(focusedObject.querySelector("img"));
+    else if (focusedObject.matches(".cell-image")) openMediaViewer(focusedObject.querySelector("img"));
+    else downloadFileCard(focusedObject);
     return;
   }
   if (event.key === "Backspace" || event.key === "Delete") {
     const selectedImage = document.querySelector(".cell-image.image-selected");
-    const object = selectedImage;
+    const selectedFile = document.querySelector(".cell-file.file-selected");
+    const object = selectedImage || selectedFile;
     if (object && document.activeElement === object) {
       event.preventDefault();
       const editor = object.closest(".cell-editor, .intro-editor");
       object.remove();
       editor?.dispatchEvent(new Event("input", { bubbles: true }));
-      showToast("Изображение удалено");
+      showToast(selectedFile ? "Файл удалён" : "Изображение удалено");
       return;
     }
   }

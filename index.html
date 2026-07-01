@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=36" />
+    <link rel="stylesheet" href="./styles.css?v=44" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -28,6 +28,7 @@
       <symbol id="icon-list-ordered" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11" /><path d="M4 5h1v4M3.5 9h3M3.5 11.5h2.2c.8 0 1.3.5 1.3 1.2 0 .5-.2.9-.7 1.3l-2.8 2.5H7M4 18h1.6c.8 0 1.4.4 1.4 1.1 0 .6-.4 1-1.2 1.1.9.1 1.4.5 1.4 1.2 0 .8-.6 1.2-1.5 1.2H4" /></symbol>
       <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z" /></symbol>
       <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
+      <symbol id="icon-circle-half" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18" /></symbol>
       <symbol id="icon-corporate" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="5" /><path d="M8 8h8v8H8z" /><path d="M10 4v4M14 16v4M4 10h4M16 14h4" /></symbol>
       <symbol id="icon-life-buoy" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /><path d="m5.6 5.6 4.3 4.3M14.1 14.1l4.3 4.3M18.4 5.6l-4.3 4.3M9.9 14.1l-4.3 4.3" /></symbol>
       <symbol id="icon-bug" viewBox="0 0 24 24"><path d="M8 6.5A4 4 0 0 1 16 6.5M9 3 7.5 1.5M15 3l1.5-1.5M8 9h8v6a4 4 0 0 1-8 0V9ZM4 10h4M16 10h4M4 15h4M16 15h4M6 20l2.5-2.5M18 20l-2.5-2.5M12 9v10" /></symbol>
@@ -44,7 +45,7 @@
         <div class="header-brand-group">
           <a class="brand" href="#" aria-label="QA Report">
             <span class="brand-mark">
-              <img src="./logo-qa.svg" alt="" />
+              QA
             </span>
             <span class="brand-copy">
               <strong>QA Report</strong>
@@ -65,8 +66,8 @@
                 <span>Светлая</span>
               </button>
               <button class="theme-menu-item" data-theme="graphite" type="button" role="menuitem">
-                <svg class="ui-icon" aria-hidden="true"><use href="#icon-corporate"></use></svg>
-                <span>Корпоративная</span>
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-circle-half"></use></svg>
+                <span>Графитовая</span>
               </button>
               <button class="theme-menu-item" data-theme="dark" type="button" role="menuitem">
                 <svg class="ui-icon" aria-hidden="true"><use href="#icon-moon"></use></svg>
@@ -242,6 +243,7 @@
               <svg class="toolbar-chevron" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
             </button>
             <input id="imageInput" type="file" accept="image/*" multiple hidden />
+            <input id="fileInput" type="file" multiple hidden />
           </div>
           <div class="link-popover" id="linkPopover" hidden>
             <div class="link-popover-heading">
@@ -271,18 +273,6 @@
             contenteditable="true"
             data-placeholder="Добавьте вводный текст: что проверялось, сборка, важные условия…"
           ></div>
-
-          <div class="section-sticky" id="sectionSticky" hidden aria-live="polite">
-            <div class="section-sticky-title" id="sectionStickyTitle"></div>
-            <div class="section-sticky-scroll" id="sectionStickyScroll">
-              <table class="check-table section-sticky-table">
-                <colgroup id="sectionStickyColgroup"></colgroup>
-                <thead>
-                  <tr id="sectionStickyHeader"></tr>
-                </thead>
-              </table>
-            </div>
-          </div>
 
           <div class="sections" id="sections"></div>
 
@@ -668,21 +658,28 @@
 
     <template id="sectionTemplate">
       <section class="check-section">
-        <header class="section-header">
-          <div class="drag-handle" title="Перетащить раздел" aria-label="Перетащить раздел">⋮⋮</div>
-          <input class="section-title" type="text" placeholder="Название раздела" />
-          <div class="section-actions">
-            <button class="icon-button move-section-up" type="button" title="Поднять раздел">↑</button>
-            <button class="icon-button move-section-down" type="button" title="Опустить раздел">↓</button>
-            <button class="icon-button collapse-section" type="button" title="Свернуть раздел">⌃</button>
-            <button class="icon-button delete-section danger" type="button" title="Удалить раздел">×</button>
+        <div class="section-sticky-block">
+          <header class="section-header">
+            <div class="drag-handle" title="Перетащить раздел" aria-label="Перетащить раздел">⋮⋮</div>
+            <input class="section-title" type="text" placeholder="Название раздела" />
+            <div class="section-actions">
+              <button class="icon-button move-section-up" type="button" title="Поднять раздел">↑</button>
+              <button class="icon-button move-section-down" type="button" title="Опустить раздел">↓</button>
+              <button class="icon-button collapse-section" type="button" title="Свернуть раздел">⌃</button>
+              <button class="icon-button delete-section danger" type="button" title="Удалить раздел">×</button>
+            </div>
+          </header>
+          <div class="section-header-scroll" aria-hidden="false">
+            <table class="section-header-table">
+              <colgroup></colgroup>
+              <thead><tr></tr></thead>
+            </table>
           </div>
-        </header>
+        </div>
         <div class="section-content">
           <div class="table-scroll">
             <table class="check-table">
               <colgroup></colgroup>
-              <thead><tr></tr></thead>
               <tbody></tbody>
             </table>
           </div>
@@ -691,6 +688,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=40"></script>
+    <script src="./app.js?v=48"></script>
   </body>
 </html>
