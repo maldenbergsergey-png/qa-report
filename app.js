@@ -1,4 +1,5 @@
 const STORAGE_KEY = "qa-report-editor-draft-v2";
+const DRAFT_SYNC_CHANNEL = "qa-report-draft-sync-v1";
 const JIRA_SETTINGS_KEY = "qa-report-jira-settings-v1";
 const STORAGE_SETTINGS_KEY = "qa-report-storage-settings-v1";
 const DB_NAME = "qa-report-editor";
@@ -52,8 +53,12 @@ function createSection(title = "Основные проверки", columns = DE
 }
 
 const DEFAULT_DRAFT = {
+  draftId: crypto.randomUUID(),
   reportId: crypto.randomUUID(),
   schemaVersion: 3,
+  revision: 0,
+  updatedAt: new Date(0).toISOString(),
+  lastSavedBy: "",
   issueUrl: "",
   environment: "STAGE",
   overallStatus: "OK",
@@ -77,6 +82,13 @@ const elements = {
   clearButton: document.querySelector("#clearButton"),
   importButton: document.querySelector("#importButton"),
   previewModal: document.querySelector("#previewModal"),
+  publishProgressModal: document.querySelector("#publishProgressModal"),
+  publishProgressBar: document.querySelector("#publishProgressBar"),
+  publishSteps: document.querySelector("#publishSteps"),
+  publishStatusText: document.querySelector("#publishStatusText"),
+  publishErrorText: document.querySelector("#publishErrorText"),
+  publishProgressHint: document.querySelector("#publishProgressHint"),
+  publishCancelButton: document.querySelector("#publishCancelButton"),
   closePreviewButton: document.querySelector("#closePreviewButton"),
   visualPreview: document.querySelector("#visualPreview"),
   markupPreview: document.querySelector("#markupPreview"),
@@ -194,8 +206,14 @@ const elements = {
   feedbackIncludeReport: document.querySelector("#feedbackIncludeReport"),
   feedbackError: document.querySelector("#feedbackError"),
   feedbackState: document.querySelector("#feedbackState"),
+  draftSyncBanner: document.querySelector("#draftSyncBanner"),
+  draftSyncUpdateButton: document.querySelector("#draftSyncUpdateButton"),
+  draftSyncKeepButton: document.querySelector("#draftSyncKeepButton"),
 };
 
+const tabId = crypto.randomUUID();
+const draftSyncChannel =
+  typeof BroadcastChannel === "function" ? new BroadcastChannel(DRAFT_SYNC_CHANNEL) : null;
 let draft = loadDraft();
 let saveTimer;
 let toastTimer;
@@ -223,8 +241,14 @@ let codeEditorInitialValue = "";
 let stickyUpdateFrame = 0;
 let linkEditorRange = null;
 let editingLink = null;
+let publishAbortController = null;
+let publishInProgress = false;
 let confirmResolver = null;
 let feedbackFiles = [];
+let hasUnsavedLocalChanges = false;
+let applyingRemoteDraft = false;
+let forceLocalDraftSave = false;
+let pendingRemoteDraft = null;
 
 applyTheme(localStorage.getItem("qa-report-theme") || "light");
 historyCurrent = serializeDraft();
@@ -233,20 +257,59 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function normalizeDraft(value) {
+  const base = clone(DEFAULT_DRAFT);
+  const parsed = value && typeof value === "object" ? value : {};
+  return {
+    ...base,
+    ...parsed,
+    draftId: parsed.draftId || parsed.reportId || crypto.randomUUID(),
+    reportId: parsed.reportId || crypto.randomUUID(),
+    schemaVersion: 3,
+    revision: Number(parsed.revision) || 0,
+    updatedAt: parsed.updatedAt || new Date(0).toISOString(),
+    lastSavedBy: parsed.lastSavedBy || "",
+    issueUrl: parsed.issueUrl || "",
+    sections:
+      Array.isArray(parsed.sections) && parsed.sections.length
+        ? clone(parsed.sections)
+        : clone(base.sections),
+  };
+}
+
+function draftContentSnapshot(value = draft) {
+  const copy = clone(value);
+  delete copy.revision;
+  delete copy.updatedAt;
+  delete copy.lastSavedBy;
+  return copy;
+}
+
+function isNewerDraft(candidate, current = draft) {
+  if (!candidate) return false;
+  if (!current) return true;
+  const candidateRevision = Number(candidate.revision) || 0;
+  const currentRevision = Number(current.revision) || 0;
+  if (candidate.draftId && current.draftId && candidate.draftId === current.draftId) {
+    if (candidateRevision !== currentRevision) return candidateRevision > currentRevision;
+  }
+  const candidateTime = Date.parse(candidate.updatedAt || "") || 0;
+  const currentTime = Date.parse(current.updatedAt || "") || 0;
+  return candidateTime > currentTime;
+}
+
+function setSaveStatus(status, { saving = false } = {}) {
+  elements.saveState.classList.toggle("saving", saving);
+  elements.saveState.querySelector("span:last-child").textContent = status;
+}
+
 function loadDraft() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return clone(DEFAULT_DRAFT);
-    const parsed = JSON.parse(saved);
-    return {
-      ...clone(DEFAULT_DRAFT),
-      ...parsed,
-      reportId: parsed.reportId || crypto.randomUUID(),
-      schemaVersion: 3,
-      issueUrl: parsed.issueUrl || "",
-    };
+    if (!saved) return normalizeDraft(DEFAULT_DRAFT);
+    return normalizeDraft(JSON.parse(saved));
   } catch {
-    return clone(DEFAULT_DRAFT);
+    return normalizeDraft(DEFAULT_DRAFT);
   }
 }
 
@@ -328,7 +391,7 @@ function issueKeyFromUrl(value) {
 }
 
 async function saveReportSnapshot(reason = "manual") {
-  collectDocumentFields();
+  flushDraftFromDom();
   const now = new Date().toISOString();
   const existing = await getReportRecord(draft.reportId);
   const issueKey = issueKeyFromUrl(draft.issueUrl);
@@ -370,6 +433,20 @@ async function getAllReports() {
   });
 }
 
+async function getFreshestStoredDraft() {
+  const candidates = [];
+  const stored = readStoredDraft();
+  if (stored) candidates.push(stored);
+  try {
+    const reports = await getAllReports();
+    const latestDocument = reports.find((report) => report.document)?.document;
+    if (latestDocument) candidates.push(normalizeDraft(latestDocument));
+  } catch {
+    // IndexedDB может быть недоступна в приватном режиме; localStorage остаётся основным источником.
+  }
+  return candidates.reduce((freshest, item) => (isNewerDraft(item, freshest) ? item : freshest), null);
+}
+
 async function deleteReportRecord(id) {
   await dbTransaction("readwrite", (store) => store.delete(id));
 }
@@ -383,27 +460,164 @@ async function clearReportHistory() {
   await dbTransaction("readwrite", (store) => store.clear());
 }
 
-function saveDraft() {
+async function saveDraft() {
+  flushDraftFromDom();
+  if (!applyingRemoteDraft && !forceLocalDraftSave) {
+    const stored = await getFreshestStoredDraft();
+    if (stored && isNewerDraft(stored)) {
+      if (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent) {
+        showDraftSyncBanner(stored);
+        setSaveStatus("Конфликт");
+        return false;
+      }
+      applyRemoteDraft(stored);
+      return false;
+    }
+  }
+  if (!applyingRemoteDraft) {
+    draft = normalizeDraft(draft);
+    draft.revision = (Number(draft.revision) || 0) + 1;
+    draft.updatedAt = new Date().toISOString();
+    draft.lastSavedBy = tabId;
+  }
+  let localStorageSaved = true;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
   } catch {
     // Большие отчёты с изображениями продолжают сохраняться в IndexedDB.
+    localStorageSaved = false;
   }
-  elements.saveState.classList.remove("saving");
-  elements.saveState.querySelector("span:last-child").textContent = "Черновик сохранён";
-  queueMicrotask(() => saveReportSnapshot("autosave").catch(() => {}));
+  hasUnsavedLocalChanges = false;
+  setSaveStatus("Сохранено");
+  saveReportSnapshot("autosave").catch(() => {
+    if (!localStorageSaved) setSaveStatus("Ошибка сохранения");
+  });
+  if (!applyingRemoteDraft) broadcastDraftUpdate();
+  forceLocalDraftSave = false;
+  return true;
+}
+
+function flushPendingDraftSave() {
+  clearTimeout(saveTimer);
+  flushDraftFromDom();
+  if (!applyingRemoteDraft) {
+    const stored = readStoredDraft();
+    if (stored && isNewerDraft(stored) && (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent)) {
+      showDraftSyncBanner(stored);
+      setSaveStatus("Конфликт");
+      return false;
+    }
+    draft = normalizeDraft(draft);
+    draft.revision = (Number(draft.revision) || 0) + 1;
+    draft.updatedAt = new Date().toISOString();
+    draft.lastSavedBy = tabId;
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+    hasUnsavedLocalChanges = false;
+    setSaveStatus("Сохранено");
+    if (!applyingRemoteDraft) broadcastDraftUpdate();
+    saveReportSnapshot("autosave").catch(() => {});
+    return true;
+  } catch {
+    setSaveStatus("Ошибка сохранения");
+    saveReportSnapshot("autosave").catch(() => {});
+    return false;
+  }
+}
+
+function broadcastDraftUpdate() {
+  draftSyncChannel?.postMessage({
+    type: "draft-updated",
+    storageKey: STORAGE_KEY,
+    draft: clone(draft),
+    draftId: draft.draftId,
+    revision: draft.revision,
+    updatedAt: draft.updatedAt,
+    tabId,
+  });
+}
+
+function readStoredDraft() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? normalizeDraft(JSON.parse(saved)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function showDraftSyncBanner(remoteDraft) {
+  pendingRemoteDraft = normalizeDraft(remoteDraft);
+  elements.draftSyncBanner.hidden = false;
+  setSaveStatus("Конфликт");
+}
+
+function hideDraftSyncBanner() {
+  pendingRemoteDraft = null;
+  elements.draftSyncBanner.hidden = true;
+}
+
+function applyRemoteDraft(remoteDraft) {
+  const normalized = normalizeDraft(remoteDraft);
+  applyingRemoteDraft = true;
+  clearTimeout(saveTimer);
+  clearTimeout(historyTimer);
+  draft = normalized;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // Если draft слишком большой для localStorage, актуальная копия остаётся в IndexedDB.
+  }
+  historyCurrent = serializeDraft();
+  hasUnsavedLocalChanges = false;
+  undoStack = [];
+  redoStack = [];
+  render();
+  updateHistoryButtons();
+  setSaveStatus("Сохранено");
+  hideDraftSyncBanner();
+  applyingRemoteDraft = false;
+}
+
+function keepCurrentDraft() {
+  if (pendingRemoteDraft) {
+    draft.revision = Math.max(Number(draft.revision) || 0, Number(pendingRemoteDraft.revision) || 0);
+  }
+  collectDocumentFields();
+  hideDraftSyncBanner();
+  forceLocalDraftSave = true;
+  saveDraft();
+}
+
+function handleRemoteDraftUpdate(remoteDraft) {
+  const normalized = normalizeDraft(remoteDraft);
+  if (normalized.lastSavedBy === tabId || normalized.tabId === tabId) return;
+  if (!isNewerDraft(normalized)) return;
+  if (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent) {
+    showDraftSyncBanner(normalized);
+    return;
+  }
+  applyRemoteDraft(normalized);
+}
+
+async function checkStoredDraftFreshness() {
+  flushDraftFromDom();
+  const stored = await getFreshestStoredDraft();
+  if (stored) handleRemoteDraftUpdate(stored);
 }
 
 function scheduleSave() {
-  elements.saveState.classList.add("saving");
-  elements.saveState.querySelector("span:last-child").textContent = "Сохраняем…";
+  flushDraftFromDom();
+  hasUnsavedLocalChanges = true;
+  setSaveStatus("Сохранение…", { saving: true });
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveDraft, 400);
   scheduleHistoryCommit();
 }
 
 function serializeDraft() {
-  return JSON.stringify(draft);
+  return JSON.stringify(draftContentSnapshot(draft));
 }
 
 function scheduleHistoryCommit() {
@@ -428,7 +642,13 @@ function updateHistoryButtons() {
 
 function restoreSerializedDraft(serialized) {
   suppressHistory = true;
-  draft = JSON.parse(serialized);
+  const currentMeta = {
+    draftId: draft.draftId,
+    revision: draft.revision,
+    updatedAt: draft.updatedAt,
+    lastSavedBy: draft.lastSavedBy,
+  };
+  draft = normalizeDraft({ ...JSON.parse(serialized), ...currentMeta });
   historyCurrent = serialized;
   render();
   saveDraft();
@@ -462,6 +682,30 @@ function collectDocumentFields() {
   draft.environment = elements.environment.value.trim() || "Не указано";
   draft.overallStatus = elements.overallStatus.value;
   draft.intro = cleanEditorHtml(elements.introEditor);
+}
+
+function collectSectionsFromDom() {
+  elements.sections.querySelectorAll(".check-section[data-section-id]").forEach((sectionElement) => {
+    const section = draft.sections.find((item) => item.id === sectionElement.dataset.sectionId);
+    if (!section) return;
+    const title = sectionElement.querySelector(".section-title");
+    if (title) section.title = title.value;
+    section.collapsed = sectionElement.classList.contains("collapsed");
+    sectionElement.querySelectorAll("tr[data-row-id]").forEach((rowElement) => {
+      const row = section.rows.find((item) => item.id === rowElement.dataset.rowId);
+      if (!row) return;
+      rowElement.querySelectorAll(".cell-editor[data-column-id]").forEach((editor) => {
+        row.cells[editor.dataset.columnId] = cleanEditorHtml(editor);
+      });
+      const status = rowElement.querySelector(".status-select");
+      if (status) row.status = status.value;
+    });
+  });
+}
+
+function flushDraftFromDom() {
+  collectDocumentFields();
+  collectSectionsFromDom();
 }
 
 function render() {
@@ -577,10 +821,16 @@ function getStickyOffset() {
 function updateStickyOffsets() {
   const stickyTop = getStickyOffset();
   document.documentElement.style.setProperty("--section-sticky-top", `${stickyTop}px`);
+  let hasStuckSection = false;
   elements.sections?.querySelectorAll(".section-sticky-block").forEach((stickyBlock) => {
     const rect = stickyBlock.getBoundingClientRect();
-    stickyBlock.classList.toggle("is-pushed-out", rect.top < stickyTop - 1);
+    const isPushedOut = rect.top < stickyTop - 1;
+    const isStuck = !isPushedOut && rect.top <= stickyTop + 1;
+    stickyBlock.classList.toggle("is-pushed-out", isPushedOut);
+    stickyBlock.classList.toggle("is-stuck", isStuck);
+    hasStuckSection ||= isStuck;
   });
+  document.body.classList.toggle("section-sticky-active", hasStuckSection);
 }
 
 function updateStickySection() {
@@ -666,17 +916,18 @@ function createColumnHeader(section, column, index) {
   menuButton.addEventListener("click", (event) => {
     event.stopPropagation();
     const items = [
-      { label: "Вставить столбец слева", action: () => insertColumn(section, index) },
-      { label: "Вставить столбец справа", action: () => insertColumn(section, index + 1) },
+      { label: "Вставить столбец слева", icon: "column-insert-left", action: () => insertColumn(section, index) },
+      { label: "Вставить столбец справа", icon: "column-insert-right", action: () => insertColumn(section, index + 1) },
     ];
     if (index > 0) {
-      items.push({ label: "Переместить влево", action: () => moveColumn(section, column.id, -1) });
+      items.push({ label: "Переместить влево", icon: "arrow-left", action: () => moveColumn(section, column.id, -1) });
     }
     if (index < section.columns.length - 1) {
-      items.push({ label: "Переместить вправо", action: () => moveColumn(section, column.id, 1) });
+      items.push({ label: "Переместить вправо", icon: "arrow-right", action: () => moveColumn(section, column.id, 1) });
     }
     items.push({
       label: "Удалить столбец",
+      icon: "trash",
       danger: true,
       action: () => deleteColumn(section, column.id),
     });
@@ -739,6 +990,7 @@ function createStatusHeader(section) {
     showFloatingMenu(menuButton, [
       {
         label: "Вставить столбец слева",
+        icon: "column-insert-left",
         action: () => insertColumn(section, section.columns.length),
       },
     ]);
@@ -797,14 +1049,15 @@ function createRowElement(section, row, index) {
   menuButton.addEventListener("click", (event) => {
     event.stopPropagation();
     showFloatingMenu(menuButton, [
-      { label: "Добавить строку выше", action: () => applyRowAction(section, row.id, "insert-above") },
-      { label: "Добавить строку ниже", action: () => applyRowAction(section, row.id, "insert-below") },
-      { label: "Дублировать", action: () => applyRowAction(section, row.id, "duplicate") },
-      { label: "Новый раздел отсюда", action: () => applyRowAction(section, row.id, "split") },
-      { label: "Поднять выше", action: () => applyRowAction(section, row.id, "move-up") },
-      { label: "Опустить ниже", action: () => applyRowAction(section, row.id, "move-down") },
+      { label: "Добавить строку выше", icon: "row-insert-above", action: () => applyRowAction(section, row.id, "insert-above") },
+      { label: "Добавить строку ниже", icon: "row-insert-below", action: () => applyRowAction(section, row.id, "insert-below") },
+      { label: "Дублировать", icon: "copy", action: () => applyRowAction(section, row.id, "duplicate") },
+      { label: "Новый раздел отсюда", icon: "section-split", action: () => applyRowAction(section, row.id, "split") },
+      { label: "Поднять выше", icon: "arrow-up", action: () => applyRowAction(section, row.id, "move-up") },
+      { label: "Опустить ниже", icon: "arrow-down", action: () => applyRowAction(section, row.id, "move-down") },
       {
         label: "Удалить",
+        icon: "trash",
         danger: true,
         action: () => applyRowAction(section, row.id, "delete"),
       },
@@ -2283,17 +2536,97 @@ function parseIssueUrl(value) {
   return { issueKey: match[1].toUpperCase(), issueUrl: url.toString() };
 }
 
-async function jiraRequest(path, body) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result.error || `Ошибка подключения: HTTP ${response.status}`);
+class JiraRequestError extends Error {
+  constructor(message, { status = 0, path = "", payload = {}, retryAfter = 0, code = "" } = {}) {
+    super(message);
+    this.name = "JiraRequestError";
+    this.status = status;
+    this.path = path;
+    this.payload = payload;
+    this.retryAfter = retryAfter;
+    this.code = code;
   }
-  return result;
+}
+
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Запрос отменён", "AbortError"));
+      return;
+    }
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
+        reject(new DOMException("Запрос отменён", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+function friendlyJiraError(error) {
+  if (error?.name === "AbortError") return "Публикация отменена";
+  if (error instanceof JiraRequestError) {
+    if (error.status === 413) return "Запрос слишком большой. Уменьшите размер вложения или отчёта.";
+    if (error.status === 429) return "Jira временно ограничила частоту запросов. Повторите позже.";
+    if (error.status === 401 || error.status === 403) return `Ошибка доступа Jira: ${error.message}`;
+    if (error.status >= 500) return `Jira временно недоступна: ${error.message}`;
+  }
+  return error?.message || "Неизвестная ошибка публикации";
+}
+
+function shouldOpenJiraSettings(error) {
+  if (error instanceof JiraRequestError) return error.status === 401 || error.status === 403;
+  return /настро|токен|адрес|ключ/i.test(error?.message || "");
+}
+
+async function jiraRequest(path, body, options = {}) {
+  const { signal, retries = 0 } = options;
+  let attempt = 0;
+  while (true) {
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const retryAfter = Number(response.headers.get("Retry-After") || 0);
+        throw new JiraRequestError(result.error || `Ошибка подключения: HTTP ${response.status}`, {
+          status: response.status,
+          path,
+          payload: result,
+          retryAfter: Number.isFinite(retryAfter) ? retryAfter : 0,
+          code: result.errorCode || "",
+        });
+      }
+      return result;
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      const retryable =
+        error instanceof JiraRequestError
+          ? error.status === 429 || error.status >= 500
+          : true;
+      if (!retryable || attempt >= retries) throw error;
+      const delay =
+        error instanceof JiraRequestError && error.retryAfter
+          ? Math.min(error.retryAfter * 1000, 8000)
+          : error instanceof JiraRequestError && error.status === 429
+            ? 1200 * (attempt + 1)
+            : 800;
+      attempt += 1;
+      await wait(delay, signal);
+    }
+  }
+}
+
+async function publishJiraRequest(path, body, options = {}) {
+  const retries = path.includes("/attachments") ? 2 : 1;
+  return jiraRequest(path, body, { ...options, retries });
 }
 
 function assertCurrentBackend(result) {
@@ -2312,25 +2645,119 @@ async function checkBackendCompatibility() {
   return result;
 }
 
-async function uploadPendingImages(settings, issue) {
+const PUBLISH_STEPS = ["prepare", "attachments", "comment", "verify"];
+
+function openPublishProgress() {
+  elements.publishProgressModal.hidden = false;
+  elements.publishCancelButton.textContent = "Отменить";
+  elements.publishCancelButton.disabled = false;
+  elements.publishErrorText.hidden = true;
+  elements.publishErrorText.textContent = "";
+  elements.publishProgressHint.textContent = "Не закрывайте страницу до завершения публикации.";
+  document.body.style.overflow = "hidden";
+}
+
+function closePublishProgress() {
+  elements.publishProgressModal.hidden = true;
+  if (
+    elements.previewModal.hidden &&
+    elements.importModal.hidden &&
+    elements.jiraSettingsModal.hidden &&
+    elements.feedbackModal.hidden
+  ) {
+    document.body.style.overflow = "";
+  }
+}
+
+function setPublishProgress({ step = "prepare", percent = 0, status = "", error = "" } = {}) {
+  elements.publishProgressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  elements.publishStatusText.textContent = status || "Публикация в Jira";
+  elements.publishSteps.querySelectorAll("li").forEach((item) => {
+    const index = PUBLISH_STEPS.indexOf(item.dataset.step);
+    const current = PUBLISH_STEPS.indexOf(step);
+    item.classList.toggle("done", index >= 0 && index < current && !error);
+    item.classList.toggle("active", item.dataset.step === step && !error);
+    item.classList.toggle("error", item.dataset.step === step && Boolean(error));
+  });
+  if (error) {
+    elements.publishErrorText.textContent = error;
+    elements.publishErrorText.hidden = false;
+    elements.publishProgressHint.textContent = "Черновик сохранён. Уже созданные вложения или комментарии не откатываются.";
+    elements.publishCancelButton.textContent = "Закрыть";
+    elements.publishCancelButton.disabled = false;
+  }
+}
+
+function finishPublishProgress(status) {
+  setPublishProgress({ step: "verify", percent: 100, status });
+  elements.publishSteps.querySelectorAll("li").forEach((item) => item.classList.add("done"));
+  elements.publishCancelButton.textContent = "Закрыть";
+  elements.publishCancelButton.disabled = false;
+  elements.publishProgressHint.textContent = "Публикация завершена.";
+}
+
+function cancelPublishProgress() {
+  if (publishInProgress && publishAbortController) {
+    publishAbortController.abort();
+    elements.publishCancelButton.disabled = true;
+    elements.publishStatusText.textContent = "Останавливаем публикацию...";
+    return;
+  }
+  closePublishProgress();
+}
+
+async function uploadPendingImages(settings, issue, options = {}) {
+  const { signal, onProgress = () => {} } = options;
   const files = [...collectLocalImages(), ...collectLocalFiles()];
   if (!files.length) return [];
-  elements.publishButton.textContent = `Вложения 0/${files.length}`;
-  const result = await jiraRequest("/api/jira/attachments", {
-    ...settings,
-    token: jiraSecret,
-    ...issue,
-    files: files.map(({ attachmentId, name, type, dataBase64 }) => ({
-      attachmentId,
-      name,
-      type,
-      dataBase64,
-    })),
-  });
-  applyUploadedAttachments(result.attachments || []);
+  const uploaded = [];
+  let index = 0;
+  let batchSize = Math.min(2, files.length);
+  onProgress({ done: 0, total: files.length });
+  while (index < files.length) {
+    signal?.throwIfAborted?.();
+    const batch = files.slice(index, index + batchSize);
+    try {
+      const result = await publishJiraRequest(
+        "/api/jira/attachments",
+        {
+          ...settings,
+          token: jiraSecret,
+          ...issue,
+          files: batch.map(({ attachmentId, name, type, dataBase64 }) => ({
+            attachmentId,
+            name,
+            type,
+            dataBase64,
+          })),
+        },
+        { signal },
+      );
+      const attachments = result.attachments || [];
+      uploaded.push(...attachments);
+      applyUploadedAttachments(attachments);
+      saveDraft();
+      index += batch.length;
+      onProgress({ done: index, total: files.length, current: batch.at(-1)?.name || "" });
+    } catch (error) {
+      if (error instanceof JiraRequestError && error.status === 413 && batchSize > 1) {
+        batchSize = 1;
+        onProgress({ done: index, total: files.length, current: "Уменьшаем размер пачки вложений" });
+        continue;
+      }
+      if (error instanceof JiraRequestError && error.status === 413 && batch.length === 1) {
+        throw new JiraRequestError(`Вложение «${batch[0].name}» слишком большое для nginx/Jira`, {
+          status: 413,
+          path: "/api/jira/attachments",
+          payload: error.payload,
+        });
+      }
+      throw error;
+    }
+  }
   saveDraft();
   render();
-  return result.attachments || [];
+  return uploaded;
 }
 
 async function testJiraConnection() {
@@ -2349,8 +2776,92 @@ async function testJiraConnection() {
   }
 }
 
+function splitWikiComment(comment) {
+  const body = String(comment.body || "");
+  const blocks = body.split(/\n\n(?=h2\. )/);
+  if (blocks.length <= 1) return [];
+  return blocks.map((block, index) => ({
+    format: "wiki",
+    body: `*Часть ${index + 1} из ${blocks.length}*\n\n${block}`,
+  }));
+}
+
+function splitAdfComment(comment) {
+  const content = comment.body?.content || [];
+  const prefix = content.slice(0, 2);
+  const rest = content.slice(2);
+  const groups = [];
+  let current = [];
+  for (const node of rest) {
+    if (node.type === "heading" && current.length) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(node);
+  }
+  if (current.length) groups.push(current);
+  if (groups.length <= 1) return [];
+  return groups.map((group, index) => ({
+    format: "adf",
+    body: {
+      type: "doc",
+      version: 1,
+      content: [
+        adfParagraph(`Часть ${index + 1} из ${groups.length}`, [{ type: "strong" }]),
+        ...prefix,
+        ...group,
+      ],
+    },
+  }));
+}
+
+function splitJiraComment(comment) {
+  return comment.format === "adf" ? splitAdfComment(comment) : splitWikiComment(comment);
+}
+
+async function postJiraComment(settings, issue, comment, signal) {
+  const result = await publishJiraRequest(
+    "/api/jira/comment",
+    {
+      ...settings,
+      token: jiraSecret,
+      ...issue,
+      comment,
+    },
+    { signal },
+  );
+  assertCurrentBackend(result);
+  if (!result.verified || !result.commentId) {
+    throw new Error(
+      `Backend ${result.appVersion || "неизвестной версии"} не вернул подтверждение комментария`,
+    );
+  }
+  return result;
+}
+
+async function publishCommentWithFallback(settings, issue, comment, signal) {
+  try {
+    return [await postJiraComment(settings, issue, comment, signal)];
+  } catch (error) {
+    if (!(error instanceof JiraRequestError) || error.status !== 413) throw error;
+    const parts = splitJiraComment(comment);
+    if (!parts.length) throw error;
+    const results = [];
+    for (let index = 0; index < parts.length; index += 1) {
+      setPublishProgress({
+        step: "comment",
+        percent: 72 + Math.round(((index + 1) / parts.length) * 16),
+        status: `Публикация комментария: часть ${index + 1} из ${parts.length}`,
+      });
+      results.push(await postJiraComment(settings, issue, parts[index], signal));
+    }
+    return results;
+  }
+}
+
 async function publishToJira() {
   const publishButtonHtml = elements.publishButton.innerHTML;
+  if (publishInProgress) return;
   try {
     collectDocumentFields();
     const issue = parseIssueUrl(draft.issueUrl);
@@ -2362,33 +2873,58 @@ async function publishToJira() {
       { title: "Отправка в Jira", confirmText: "Отправить" },
     );
     if (!confirmed) return;
+    publishAbortController = new AbortController();
+    publishInProgress = true;
+    openPublishProgress();
+    setPublishProgress({ step: "prepare", percent: 8, status: "Подготовка отчёта" });
     elements.publishButton.disabled = true;
     elements.publishButton.innerHTML =
       '<span class="primary-action-icon">…</span><span class="primary-action-label">Отправляем…</span>';
-    await uploadPendingImages(settings, issue);
+    await uploadPendingImages(settings, issue, {
+      signal: publishAbortController.signal,
+      onProgress: ({ done, total }) => {
+        const percent = total ? 15 + Math.round((done / total) * 45) : 55;
+        setPublishProgress({
+          step: "attachments",
+          percent,
+          status: `Загрузка вложений: ${done} из ${total}`,
+        });
+      },
+    });
     const comment =
       settings.type === "cloud"
         ? { format: "adf", body: generateAdfDocument() }
         : { format: "wiki", body: generateMarkup() };
-    const result = await jiraRequest("/api/jira/comment", {
-      ...settings,
-      token: jiraSecret,
-      ...issue,
-      comment,
-    });
-    assertCurrentBackend(result);
-    if (!result.verified || !result.commentId) {
-      throw new Error(
-        `Backend ${result.appVersion || "неизвестной версии"} не вернул подтверждение комментария`,
-      );
-    }
-    showToast(`Комментарий ${result.commentId} опубликован в ${issue.issueKey}`);
-    if (result.commentUrl) window.open(result.commentUrl, "_blank", "noopener");
+    setPublishProgress({ step: "comment", percent: 68, status: "Публикация комментария" });
+    const results = await publishCommentWithFallback(settings, issue, comment, publishAbortController.signal);
+    setPublishProgress({ step: "verify", percent: 96, status: "Проверка созданного комментария" });
+    const result = results.at(-1);
+    finishPublishProgress(
+      results.length > 1
+        ? `Опубликовано комментариев: ${results.length}`
+        : "Комментарий опубликован",
+    );
+    showToast(`Опубликовано в ${issue.issueKey}`);
+    if (result?.commentUrl) window.open(result.commentUrl, "_blank", "noopener");
   } catch (error) {
     console.error("Ошибка публикации Jira:", error);
-    showToast(error.message, 9000);
-    if (/настро|токен|адрес|ключ/i.test(error.message)) openJiraSettings();
+    const message = friendlyJiraError(error);
+    setPublishProgress({
+      step:
+        error instanceof JiraRequestError && error.path.includes("/attachments")
+          ? "attachments"
+          : error instanceof JiraRequestError && error.path.includes("/comment")
+            ? "comment"
+            : "prepare",
+      percent: 100,
+      status: "Публикация остановлена",
+      error: message,
+    });
+    showToast(message, 9000);
+    if (shouldOpenJiraSettings(error)) openJiraSettings();
   } finally {
+    publishInProgress = false;
+    publishAbortController = null;
     elements.publishButton.disabled = false;
     elements.publishButton.innerHTML = publishButtonHtml;
   }
@@ -2464,7 +3000,7 @@ async function renderHistoryList() {
     const openButton = createSmallButton("Открыть", async () => {
       await saveReportSnapshot("before-open-history");
       suppressHistory = true;
-      draft = clone(report.document);
+      draft = normalizeDraft(clone(report.document));
       historyCurrent = serializeDraft();
       undoStack = [];
       redoStack = [];
@@ -2476,7 +3012,8 @@ async function renderHistoryList() {
     });
     const copyButton = createSmallButton("Копия", async () => {
       await saveReportSnapshot("before-copy-history");
-      draft = clone(report.document);
+      draft = normalizeDraft(clone(report.document));
+      draft.draftId = crypto.randomUUID();
       draft.reportId = crypto.randomUUID();
       historyCurrent = serializeDraft();
       undoStack = [];
@@ -2648,6 +3185,22 @@ function createObjectActionButton({ icon, title, className = "", action }) {
     await action(event, button);
   });
   return button;
+}
+
+function createImageResizeHint() {
+  const hint = document.createElement("span");
+  hint.className = "image-resize-hint";
+  hint.dataset.editorUi = "true";
+  hint.contentEditable = "false";
+  hint.title = "Потяните, чтобы изменить размер";
+  hint.setAttribute("aria-hidden", "true");
+  hint.innerHTML =
+    '<svg viewBox="0 0 18 18" focusable="false">' +
+    '<path d="M14 4 4 14" />' +
+    '<path d="M14 9 9 14" />' +
+    '<path d="M14 13.5 13.5 14" />' +
+    "</svg>";
+  return hint;
 }
 
 function highlightCodeBlock(block) {
@@ -3645,7 +4198,7 @@ function enhanceImageControls(root = document) {
       action: (_event, button) => showImageMenu(figure, button),
     });
     controls.append(copyButton, deleteButton, moreButton);
-    figure.append(controls);
+    figure.append(controls, createImageResizeHint());
     enableImageObject(figure);
   });
 }
@@ -3978,7 +4531,12 @@ async function applyImport(mode = "replace") {
       if (imported.intro) draft.intro += imported.intro;
     } else {
       const issueUrl = draft.issueUrl;
-      draft = { ...imported, reportId: crypto.randomUUID(), issueUrl: imported.issueUrl || issueUrl };
+      draft = normalizeDraft({
+        ...imported,
+        draftId: crypto.randomUUID(),
+        reportId: crypto.randomUUID(),
+        issueUrl: imported.issueUrl || issueUrl,
+      });
     }
     scheduleHistoryCommit();
     saveDraft();
@@ -4022,13 +4580,17 @@ async function savePreviewMarkupToDraft() {
   try {
     const imported = parseJiraMarkup(elements.markupPreview.value, collectCurrentAttachments());
     await saveReportSnapshot("before-preview-markup-save");
-    draft = {
+    draft = normalizeDraft({
       ...imported,
+      draftId: draft.draftId,
       reportId: draft.reportId,
       issueUrl: draft.issueUrl,
       environment: imported.environment || draft.environment,
       overallStatus: imported.overallStatus || draft.overallStatus,
-    };
+      revision: draft.revision,
+      updatedAt: draft.updatedAt,
+      lastSavedBy: draft.lastSavedBy,
+    });
     scheduleHistoryCommit();
     saveDraft();
     render();
@@ -4436,7 +4998,7 @@ function showToast(message, duration = 2500) {
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   if (!elements.themeToggle) return;
-  const iconMap = { light: "#icon-sun", graphite: "#icon-circle-half", dark: "#icon-moon" };
+  const iconMap = { light: "#icon-sun", graphite: "#icon-contrast", dark: "#icon-moon" };
   elements.themeToggle.querySelector(".theme-icon use")?.setAttribute(
     "href",
     iconMap[theme] || "#icon-moon",
@@ -4508,7 +5070,8 @@ async function resetDraft() {
   });
   if (!confirmed) return;
   saveReportSnapshot("before-new").catch(() => {});
-  draft = clone(DEFAULT_DRAFT);
+  draft = normalizeDraft(clone(DEFAULT_DRAFT));
+  draft.draftId = crypto.randomUUID();
   draft.reportId = crypto.randomUUID();
   draft.sections = [createSection("Основные проверки", DEFAULT_COLUMNS, 2)];
   historyCurrent = serializeDraft();
@@ -5143,6 +5706,11 @@ elements.closeJiraSettingsButton.addEventListener("click", closeJiraSettings);
 elements.saveJiraSettingsButton.addEventListener("click", saveJiraSettings);
 elements.testJiraButton.addEventListener("click", testJiraConnection);
 elements.publishButton.addEventListener("click", publishToJira);
+elements.publishCancelButton.addEventListener("click", cancelPublishProgress);
+elements.draftSyncUpdateButton.addEventListener("click", () => {
+  if (pendingRemoteDraft) applyRemoteDraft(pendingRemoteDraft);
+});
+elements.draftSyncKeepButton.addEventListener("click", keepCurrentDraft);
 elements.jiraType.addEventListener("change", updateJiraSettingsLabels);
 elements.jiraAuthMethod.addEventListener("change", updateJiraSettingsLabels);
 elements.settingsJiraSectionButton.addEventListener("click", () => setSettingsSection("jira"));
@@ -5227,6 +5795,27 @@ window.addEventListener("resize", () => {
   if (!elements.linkPopover.hidden) positionLinkPopover();
   scheduleStickySectionUpdate();
 });
+draftSyncChannel?.addEventListener("message", (event) => {
+  if (event.data?.type !== "draft-updated" || event.data.storageKey !== STORAGE_KEY) return;
+  handleRemoteDraftUpdate(event.data.draft);
+});
+window.addEventListener("storage", (event) => {
+  if (event.key !== STORAGE_KEY || !event.newValue) return;
+  try {
+    handleRemoteDraftUpdate(JSON.parse(event.newValue));
+  } catch {
+    // Некорректное значение storage игнорируем.
+  }
+});
+window.addEventListener("focus", checkStoredDraftFreshness);
+window.addEventListener("blur", flushPendingDraftSave);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    checkStoredDraftFreshness();
+  } else {
+    flushPendingDraftSave();
+  }
+});
 window.addEventListener("scroll", () => {
   closeFloatingMenu();
   scheduleStickySectionUpdate();
@@ -5296,7 +5885,7 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     collectDocumentFields();
     saveDraft();
-    showToast("Черновик сохранён");
+    showToast("Сохранено");
   }
 });
 window.addEventListener("beforeunload", (event) => {
@@ -5304,9 +5893,9 @@ window.addEventListener("beforeunload", (event) => {
     event.preventDefault();
     event.returnValue = "";
   }
-  collectDocumentFields();
-  saveDraft();
+  flushPendingDraftSave();
 });
 
 render();
 updateHistoryButtons();
+checkStoredDraftFreshness();

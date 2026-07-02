@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=44" />
+    <link rel="stylesheet" href="./styles.css?v=48" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -18,8 +18,11 @@
       <symbol id="icon-eye" viewBox="0 0 24 24"><path d="M2.1 12s3.6-7 9.9-7 9.9 7 9.9 7-3.6 7-9.9 7-9.9-7-9.9-7Z" /><circle cx="12" cy="12" r="3" /></symbol>
       <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
       <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></symbol>
+      <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 3v10m0 0 4-4m-4 4-4-4" /><path d="M5 15v4h14v-4" /></symbol>
+      <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 21V9m0 0 5 5m-5-5-5 5M5 3h14" /></symbol>
       <symbol id="icon-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></symbol>
       <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></symbol>
+      <symbol id="icon-ticket" viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 0 1 2 2v3a2 2 0 0 0 0 4v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3a2 2 0 0 0 0-4V7a2 2 0 0 1 2-2Z" /><path d="M9 9h6M9 13h4" /></symbol>
       <symbol id="icon-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18M9 4v16" /></symbol>
       <symbol id="icon-code" viewBox="0 0 24 24"><path d="m8 9-3 3 3 3M16 9l3 3-3 3M14 5l-4 14" /></symbol>
       <symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" /><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1" /></symbol>
@@ -29,12 +32,23 @@
       <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 9 9 0 1 0 20.5 14.2Z" /></symbol>
       <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
       <symbol id="icon-circle-half" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18" /></symbol>
+      <symbol id="icon-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18Z" style="fill: currentColor; stroke: none" /></symbol>
       <symbol id="icon-corporate" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="5" /><path d="M8 8h8v8H8z" /><path d="M10 4v4M14 16v4M4 10h4M16 14h4" /></symbol>
       <symbol id="icon-life-buoy" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /><path d="m5.6 5.6 4.3 4.3M14.1 14.1l4.3 4.3M18.4 5.6l-4.3 4.3M9.9 14.1l-4.3 4.3" /></symbol>
       <symbol id="icon-bug" viewBox="0 0 24 24"><path d="M8 6.5A4 4 0 0 1 16 6.5M9 3 7.5 1.5M15 3l1.5-1.5M8 9h8v6a4 4 0 0 1-8 0V9ZM4 10h4M16 10h4M4 15h4M16 15h4M6 20l2.5-2.5M18 20l-2.5-2.5M12 9v10" /></symbol>
       <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></symbol>
+      <symbol id="icon-save" viewBox="0 0 24 24"><path d="M5 4h12l2 2v14H5Z" /><path d="M8 4v6h8V4M8 20v-6h8v6" /></symbol>
       <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 15H6L5 6M10 11v6M14 11v6" /></symbol>
       <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></symbol>
+      <symbol id="icon-arrow-left" viewBox="0 0 24 24"><path d="M15 6 9 12l6 6" /><path d="M20 12H9" /></symbol>
+      <symbol id="icon-arrow-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /><path d="M4 12h11" /></symbol>
+      <symbol id="icon-arrow-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6" /><path d="M12 20V9" /></symbol>
+      <symbol id="icon-arrow-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /><path d="M12 4v11" /></symbol>
+      <symbol id="icon-column-insert-left" viewBox="0 0 24 24"><rect x="9" y="4" width="10" height="16" rx="2" /><path d="M14 4v16M5 9v6M2 12h6" /></symbol>
+      <symbol id="icon-column-insert-right" viewBox="0 0 24 24"><rect x="5" y="4" width="10" height="16" rx="2" /><path d="M10 4v16M19 9v6M16 12h6" /></symbol>
+      <symbol id="icon-row-insert-above" viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="10" rx="2" /><path d="M4 14h16M9 5h6M12 2v6" /></symbol>
+      <symbol id="icon-row-insert-below" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="10" rx="2" /><path d="M4 10h16M9 19h6M12 16v6" /></symbol>
+      <symbol id="icon-section-split" viewBox="0 0 24 24"><path d="M5 5h14M5 19h14M5 12h6M17 9l3 3-3 3" /><path d="M14 12h6" /></symbol>
       <symbol id="icon-align-left" viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 14h16M4 18h10" /></symbol>
       <symbol id="icon-align-center" viewBox="0 0 24 24"><path d="M4 6h16M7 10h10M4 14h16M7 18h10" /></symbol>
       <symbol id="icon-align-right" viewBox="0 0 24 24"><path d="M4 6h16M10 10h10M4 14h16M10 18h10" /></symbol>
@@ -54,7 +68,7 @@
           </a>
           <div class="save-state" id="saveState">
             <span class="save-dot"></span>
-            <span>Черновик сохранён</span>
+            <span>Сохранено</span>
           </div>
           <div class="theme-selector">
             <button class="header-icon-button theme-toggle" id="themeToggle" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="themeMenu" title="Выберите тему" aria-label="Выберите тему">
@@ -66,7 +80,7 @@
                 <span>Светлая</span>
               </button>
               <button class="theme-menu-item" data-theme="graphite" type="button" role="menuitem">
-                <svg class="ui-icon" aria-hidden="true"><use href="#icon-circle-half"></use></svg>
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-contrast"></use></svg>
                 <span>Графитовая</span>
               </button>
               <button class="theme-menu-item" data-theme="dark" type="button" role="menuitem">
@@ -111,17 +125,17 @@
         <div class="header-integrations">
           <div class="header-dropdown">
             <button class="header-dropdown-trigger" id="jiraMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="jiraMenu">
-              <svg class="ui-icon dropdown-leading-icon" aria-hidden="true"><use href="#icon-settings"></use></svg>
+              <svg class="ui-icon dropdown-leading-icon" aria-hidden="true"><use href="#icon-ticket"></use></svg>
               <span>Jira</span>
               <svg class="ui-icon chevron-icon" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
             </button>
             <div class="header-dropdown-menu" id="jiraMenu" role="menu" hidden>
               <button class="header-dropdown-item" id="importButton" type="button" role="menuitem">
-                <svg class="ui-icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-import"></use></svg>
                 <span>Загрузить из Jira</span>
               </button>
               <button class="header-dropdown-item" id="publishButton" type="button" role="menuitem">
-                <svg class="ui-icon primary-action-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
+                <svg class="ui-icon primary-action-icon" aria-hidden="true"><use href="#icon-upload"></use></svg>
                 <span class="primary-action-label">Отправить в Jira</span>
               </button>
             </div>
@@ -308,9 +322,14 @@
         <header class="modal-header">
           <div>
             <div class="eyebrow">Экспорт</div>
-            <h2 id="previewTitle">Предпросмотр экспорта</h2>
+            <h2 id="previewTitle">Предпросмотр</h2>
           </div>
-          <button class="icon-button" id="closePreviewButton" type="button" aria-label="Закрыть">×</button>
+          <div class="modal-header-actions">
+            <button class="header-icon-button modal-save-button" id="modalSaveMarkupButton" type="button" title="Сохранить результат экспорта" aria-label="Сохранить результат экспорта">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-save"></use></svg>
+            </button>
+            <button class="icon-button" id="closePreviewButton" type="button" aria-label="Закрыть">×</button>
+          </div>
         </header>
         <div class="preview-tabs" role="tablist">
           <button class="preview-tab active" data-preview-tab="visual" type="button">Визуально</button>
@@ -321,18 +340,45 @@
           <textarea id="markupPreview" class="markup-preview" aria-label="Редактируемая Jira-разметка" hidden></textarea>
         </div>
         <footer class="modal-footer">
-          <span>Jira-разметку можно отредактировать перед копированием.</span>
+          <span>Разметку можно отредактировать перед копированием.</span>
           <div class="modal-actions">
             <button class="button button-secondary" id="modalCopyVisualButton" type="button">
-              ▦ Копировать таблицу
-            </button>
-            <button class="button button-secondary" id="modalSaveMarkupButton" type="button">
-              Сохранить в таблицу
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-table"></use></svg>
+              <span>Копировать визуальную таблицу</span>
             </button>
             <button class="button button-primary" id="modalCopyButton" type="button">
-              ⧉ Копировать Jira
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-code"></use></svg>
+              <span>Копировать Jira-разметку</span>
             </button>
           </div>
+        </footer>
+      </section>
+    </div>
+
+    <div class="modal-backdrop publish-progress-backdrop" id="publishProgressModal" hidden>
+      <section class="modal publish-progress-modal" role="dialog" aria-modal="true" aria-labelledby="publishProgressTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Jira</div>
+            <h2 id="publishProgressTitle">Публикация в Jira</h2>
+          </div>
+        </header>
+        <div class="publish-progress-body">
+          <div class="publish-progress-bar" aria-hidden="true">
+            <span id="publishProgressBar"></span>
+          </div>
+          <ol class="publish-steps" id="publishSteps">
+            <li data-step="prepare">Подготовка отчёта</li>
+            <li data-step="attachments">Загрузка вложений</li>
+            <li data-step="comment">Публикация комментария</li>
+            <li data-step="verify">Проверка результата</li>
+          </ol>
+          <p class="publish-status" id="publishStatusText">Ожидание запуска</p>
+          <p class="publish-error" id="publishErrorText" hidden></p>
+        </div>
+        <footer class="modal-footer">
+          <span id="publishProgressHint">Не закрывайте страницу до завершения публикации.</span>
+          <button class="button button-secondary" id="publishCancelButton" type="button">Отменить</button>
         </footer>
       </section>
     </div>
@@ -655,6 +701,13 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="draft-sync-banner" id="draftSyncBanner" hidden>
+      <span>Есть более новая версия чек-листа</span>
+      <div class="draft-sync-actions">
+        <button class="button button-secondary" id="draftSyncKeepButton" type="button">Оставить текущую</button>
+        <button class="button button-primary" id="draftSyncUpdateButton" type="button">Обновить</button>
+      </div>
+    </div>
 
     <template id="sectionTemplate">
       <section class="check-section">
@@ -688,6 +741,6 @@
       </section>
     </template>
 
-    <script src="./app.js?v=48"></script>
+    <script src="./app.js?v=52"></script>
   </body>
 </html>
