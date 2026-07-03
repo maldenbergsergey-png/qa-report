@@ -1828,6 +1828,12 @@ body.section-sticky-active .editor-toolbar::after {
   font-weight: 800;
 }
 
+.publish-steps li.done.active::before {
+  animation: none;
+  background: transparent;
+  transform: none;
+}
+
 .publish-steps li.error {
   color: var(--red);
 }

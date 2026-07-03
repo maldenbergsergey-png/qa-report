@@ -8,6 +8,7 @@ const REPORT_STORE = "reports";
 const HISTORY_LIMIT = 50;
 const REQUIRED_API_REVISION = 5;
 const FILE_ATTACHMENT_MAX_SIZE = 15 * 1024 * 1024;
+const ATTACHMENT_UPLOAD_BATCH_SIZE = 1;
 
 const STATUS_META = {
   OK: { className: "status-ok", color: "#22a06b", jiraColor: "#14892c" },
@@ -2732,7 +2733,10 @@ function setPublishProgress({ step = "prepare", percent = 0, status = "", error 
 
 function finishPublishProgress(status) {
   setPublishProgress({ step: "verify", percent: 100, status });
-  elements.publishSteps.querySelectorAll("li").forEach((item) => item.classList.add("done"));
+  elements.publishSteps.querySelectorAll("li").forEach((item) => {
+    item.classList.remove("active", "error");
+    item.classList.add("done");
+  });
   elements.publishCancelButton.textContent = "Закрыть";
   elements.publishCancelButton.disabled = false;
   elements.publishProgressHint.textContent = "Публикация завершена.";
@@ -2754,11 +2758,10 @@ async function uploadPendingImages(settings, issue, options = {}) {
   if (!files.length) return [];
   const uploaded = [];
   let index = 0;
-  let batchSize = Math.min(2, files.length);
   onProgress({ done: 0, total: files.length });
   while (index < files.length) {
     signal?.throwIfAborted?.();
-    const batch = files.slice(index, index + batchSize);
+    const batch = files.slice(index, index + ATTACHMENT_UPLOAD_BATCH_SIZE);
     try {
       const result = await publishJiraRequest(
         "/api/jira/attachments",
@@ -2782,17 +2785,16 @@ async function uploadPendingImages(settings, issue, options = {}) {
       index += batch.length;
       onProgress({ done: index, total: files.length, current: batch.at(-1)?.name || "" });
     } catch (error) {
-      if (error instanceof JiraRequestError && error.status === 413 && batchSize > 1) {
-        batchSize = 1;
-        onProgress({ done: index, total: files.length, current: "Уменьшаем размер пачки вложений" });
-        continue;
-      }
       if (error instanceof JiraRequestError && error.status === 413 && batch.length === 1) {
-        throw new JiraRequestError(`Вложение «${batch[0].name}» слишком большое для nginx/Jira`, {
-          status: 413,
-          path: "/api/jira/attachments",
-          payload: error.payload,
-        });
+        throw new JiraRequestError(
+          `Вложение «${batch[0].name}» слишком большое для nginx/Jira. ` +
+            "Файлы отправляются по одному; если файл небольшой, увеличьте лимит тела запроса в reverse proxy.",
+          {
+            status: 413,
+            path: "/api/jira/attachments",
+            payload: error.payload,
+          },
+        );
       }
       throw error;
     }
@@ -3975,6 +3977,7 @@ async function insertAttachments(files) {
 function fileCardToWiki(card) {
   const name = card.dataset.jiraName || card.dataset.fileName || "file";
   const url = card.dataset.jiraUrl || "";
+  if (card.dataset.jiraName) return `[^${name}]`;
   return url ? `[${name}|${url}]` : `[Файл: ${name}]`;
 }
 
@@ -4494,29 +4497,34 @@ function collectCurrentAttachments() {
   return attachments;
 }
 
+function applyUploadedAttachmentsToRoot(root, byLocalId) {
+  let changed = false;
+  root.querySelectorAll("img[data-attachment-id]").forEach((image) => {
+    const uploadedFile = byLocalId.get(image.dataset.attachmentId);
+    if (!uploadedFile) return;
+    image.dataset.jiraName = uploadedFile.filename || image.dataset.fileName || "";
+    image.dataset.jiraId = uploadedFile.id || "";
+    image.dataset.jiraUrl = uploadedFile.content || "";
+    if (uploadedFile.thumbnail) image.dataset.jiraThumbnail = uploadedFile.thumbnail;
+    changed = true;
+  });
+  root.querySelectorAll(".cell-file[data-attachment-id]").forEach((card) => {
+    const uploadedFile = byLocalId.get(card.dataset.attachmentId);
+    if (!uploadedFile) return;
+    card.dataset.jiraName = uploadedFile.filename || card.dataset.fileName || "";
+    card.dataset.jiraId = uploadedFile.id || "";
+    card.dataset.jiraUrl = uploadedFile.content || "";
+    changed = true;
+  });
+  return changed;
+}
+
 function applyUploadedAttachments(uploaded) {
   const byLocalId = new Map(uploaded.map((item) => [item.attachmentId, item]));
   const updateHtml = (html) => {
     const container = document.createElement("div");
     container.innerHTML = html || "";
-    let changed = false;
-    container.querySelectorAll("img[data-attachment-id]").forEach((image) => {
-      const uploadedFile = byLocalId.get(image.dataset.attachmentId);
-      if (!uploadedFile) return;
-      image.dataset.jiraName = uploadedFile.filename || image.dataset.fileName;
-      image.dataset.jiraId = uploadedFile.id || "";
-      image.dataset.jiraUrl = uploadedFile.content || "";
-      if (uploadedFile.thumbnail) image.dataset.jiraThumbnail = uploadedFile.thumbnail;
-      changed = true;
-    });
-    container.querySelectorAll(".cell-file[data-attachment-id]").forEach((card) => {
-      const uploadedFile = byLocalId.get(card.dataset.attachmentId);
-      if (!uploadedFile) return;
-      card.dataset.jiraName = uploadedFile.filename || card.dataset.fileName;
-      card.dataset.jiraId = uploadedFile.id || "";
-      card.dataset.jiraUrl = uploadedFile.content || "";
-      changed = true;
-    });
+    const changed = applyUploadedAttachmentsToRoot(container, byLocalId);
     return changed ? container.innerHTML : html;
   };
   draft.intro = updateHtml(draft.intro);
@@ -4527,6 +4535,8 @@ function applyUploadedAttachments(uploaded) {
       }
     }
   }
+  applyUploadedAttachmentsToRoot(elements.introEditor, byLocalId);
+  applyUploadedAttachmentsToRoot(elements.sections, byLocalId);
 }
 
 async function prepareImport() {
