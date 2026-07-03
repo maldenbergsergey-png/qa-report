@@ -298,6 +298,13 @@ function isNewerDraft(candidate, current = draft) {
   return candidateTime > currentTime;
 }
 
+function isSameDraftLineage(candidate, current = draft) {
+  if (!candidate || !current) return false;
+  if (candidate.draftId && current.draftId) return candidate.draftId === current.draftId;
+  if (candidate.reportId && current.reportId) return candidate.reportId === current.reportId;
+  return false;
+}
+
 function setSaveStatus(status, { saving = false } = {}) {
   elements.saveState.classList.toggle("saving", saving);
   elements.saveState.querySelector("span:last-child").textContent = status;
@@ -436,11 +443,13 @@ async function getAllReports() {
 async function getFreshestStoredDraft() {
   const candidates = [];
   const stored = readStoredDraft();
-  if (stored) candidates.push(stored);
+  if (stored && isSameDraftLineage(stored)) candidates.push(stored);
   try {
-    const reports = await getAllReports();
-    const latestDocument = reports.find((report) => report.document)?.document;
-    if (latestDocument) candidates.push(normalizeDraft(latestDocument));
+    const currentReport = await getReportRecord(draft.reportId);
+    if (currentReport?.document) {
+      const reportDraft = normalizeDraft(currentReport.document);
+      if (isSameDraftLineage(reportDraft)) candidates.push(reportDraft);
+    }
   } catch {
     // IndexedDB может быть недоступна в приватном режиме; localStorage остаётся основным источником.
   }
@@ -584,7 +593,7 @@ function keepCurrentDraft() {
   if (pendingRemoteDraft) {
     draft.revision = Math.max(Number(draft.revision) || 0, Number(pendingRemoteDraft.revision) || 0);
   }
-  collectDocumentFields();
+  flushDraftFromDom();
   hideDraftSyncBanner();
   forceLocalDraftSave = true;
   saveDraft();
@@ -593,6 +602,7 @@ function keepCurrentDraft() {
 function handleRemoteDraftUpdate(remoteDraft) {
   const normalized = normalizeDraft(remoteDraft);
   if (normalized.lastSavedBy === tabId || normalized.tabId === tabId) return;
+  if (!isSameDraftLineage(normalized)) return;
   if (!isNewerDraft(normalized)) return;
   if (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent) {
     showDraftSyncBanner(normalized);
@@ -613,6 +623,16 @@ function scheduleSave() {
   setSaveStatus("Сохранение…", { saving: true });
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveDraft, 400);
+  scheduleHistoryCommit();
+}
+
+function saveLocalMutationNow() {
+  flushDraftFromDom();
+  hasUnsavedLocalChanges = true;
+  setSaveStatus("Сохранение…", { saving: true });
+  clearTimeout(saveTimer);
+  forceLocalDraftSave = true;
+  saveDraft();
   scheduleHistoryCommit();
 }
 
@@ -749,9 +769,12 @@ function renderSections() {
     fragment.querySelector(".move-section-down").addEventListener("click", () => moveSection(section.id, 1));
     fragment.querySelector(".delete-section").addEventListener("click", () => deleteSection(section.id));
     fragment.querySelector(".add-row-button").addEventListener("click", () => {
-      section.rows.push(createRow(section.columns));
+      flushDraftFromDom();
+      const currentSection = draft.sections.find((item) => item.id === section.id);
+      if (!currentSection) return;
+      currentSection.rows.push(createRow(currentSection.columns));
       renderSections();
-      scheduleSave();
+      saveLocalMutationNow();
     });
     renderTable(fragment, section);
     enableSectionDragging(sectionElement, section.id);
@@ -1083,96 +1106,115 @@ function createStatusSelect(value) {
 }
 
 function insertColumn(section, index) {
+  flushDraftFromDom();
+  const currentSection = draft.sections.find((item) => item.id === section.id);
+  if (!currentSection) return;
   const column = { id: `column-${crypto.randomUUID()}`, title: "Новый столбец" };
-  section.columns.splice(index, 0, column);
-  section.rows.forEach((row) => (row.cells[column.id] = ""));
+  const insertionIndex = Math.max(0, Math.min(index, currentSection.columns.length));
+  currentSection.columns.splice(insertionIndex, 0, column);
+  currentSection.rows.forEach((row) => (row.cells[column.id] = ""));
   closeFloatingMenu();
   renderSections();
-  scheduleSave();
+  saveLocalMutationNow();
   const target = elements.sections.querySelector(
-    `[data-section-id="${section.id}"] th[data-column-id="${column.id}"] input`,
+    `[data-section-id="${currentSection.id}"] th[data-column-id="${column.id}"] input`,
   );
   target?.select();
 }
 
 function moveColumn(section, columnId, offset) {
-  const index = section.columns.findIndex((column) => column.id === columnId);
+  flushDraftFromDom();
+  const currentSection = draft.sections.find((item) => item.id === section.id);
+  if (!currentSection) return;
+  const index = currentSection.columns.findIndex((column) => column.id === columnId);
   const targetIndex = index + offset;
-  if (index < 0 || targetIndex < 0 || targetIndex >= section.columns.length) return;
-  const [column] = section.columns.splice(index, 1);
-  section.columns.splice(targetIndex, 0, column);
+  if (index < 0 || targetIndex < 0 || targetIndex >= currentSection.columns.length) return;
+  const [column] = currentSection.columns.splice(index, 1);
+  currentSection.columns.splice(targetIndex, 0, column);
   closeFloatingMenu();
   renderSections();
-  scheduleSave();
+  saveLocalMutationNow();
 }
 
 function moveColumnTo(section, sourceId, targetId, placeAfter = false) {
-  const sourceIndex = section.columns.findIndex((column) => column.id === sourceId);
-  const targetIndex = section.columns.findIndex((column) => column.id === targetId);
+  flushDraftFromDom();
+  const currentSection = draft.sections.find((item) => item.id === section.id);
+  if (!currentSection) return;
+  const sourceIndex = currentSection.columns.findIndex((column) => column.id === sourceId);
+  const targetIndex = currentSection.columns.findIndex((column) => column.id === targetId);
   if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
-  const [column] = section.columns.splice(sourceIndex, 1);
-  const currentTargetIndex = section.columns.findIndex((item) => item.id === targetId);
+  const [column] = currentSection.columns.splice(sourceIndex, 1);
+  const currentTargetIndex = currentSection.columns.findIndex((item) => item.id === targetId);
   const insertionIndex = currentTargetIndex + (placeAfter ? 1 : 0);
-  section.columns.splice(insertionIndex, 0, column);
+  currentSection.columns.splice(insertionIndex, 0, column);
   renderSections();
-  scheduleSave();
+  saveLocalMutationNow();
 }
 
 function deleteColumn(section, columnId) {
-  section.columns = section.columns.filter((column) => column.id !== columnId);
-  section.rows.forEach((row) => delete row.cells[columnId]);
+  flushDraftFromDom();
+  const currentSection = draft.sections.find((item) => item.id === section.id);
+  if (!currentSection) return;
+  currentSection.columns = currentSection.columns.filter((column) => column.id !== columnId);
+  currentSection.rows.forEach((row) => delete row.cells[columnId]);
   closeFloatingMenu();
   renderSections();
   renderSummary();
-  scheduleSave();
+  saveLocalMutationNow();
 }
 
 function splitSectionAtRow(section, rowIndex) {
+  flushDraftFromDom();
+  const currentSection = draft.sections.find((item) => item.id === section.id);
+  if (!currentSection) return;
   if (rowIndex <= 0) {
     showToast("Выберите строку ниже первой");
     return;
   }
-  const sectionIndex = draft.sections.findIndex((item) => item.id === section.id);
-  const movedRows = section.rows.splice(rowIndex);
+  const sectionIndex = draft.sections.findIndex((item) => item.id === currentSection.id);
+  const movedRows = currentSection.rows.splice(rowIndex);
   const newSection = {
     id: crypto.randomUUID(),
-    title: `${section.title} — продолжение`,
+    title: `${currentSection.title} — продолжение`,
     collapsed: false,
-    columns: clone(section.columns),
+    columns: clone(currentSection.columns),
     rows: movedRows,
   };
   draft.sections.splice(sectionIndex + 1, 0, newSection);
   renderSections();
   renderSummary();
-  scheduleSave();
+  saveLocalMutationNow();
 }
 
 function applyRowAction(section, rowId, action) {
-  const index = section.rows.findIndex((row) => row.id === rowId);
+  flushDraftFromDom();
+  const currentSection = draft.sections.find((item) => item.id === section.id);
+  if (!currentSection) return;
+  const index = currentSection.rows.findIndex((row) => row.id === rowId);
   if (index < 0) return;
   if (action === "insert-above") {
-    section.rows.splice(index, 0, createRow(section.columns));
+    currentSection.rows.splice(index, 0, createRow(currentSection.columns));
   } else if (action === "insert-below") {
-    section.rows.splice(index + 1, 0, createRow(section.columns));
+    currentSection.rows.splice(index + 1, 0, createRow(currentSection.columns));
   } else if (action === "duplicate") {
-    section.rows.splice(index + 1, 0, { ...clone(section.rows[index]), id: crypto.randomUUID() });
+    currentSection.rows.splice(index + 1, 0, { ...clone(currentSection.rows[index]), id: crypto.randomUUID() });
   } else if (action === "split") {
-    splitSectionAtRow(section, index);
+    splitSectionAtRow(currentSection, index);
     return;
   } else if (action === "move-up" && index > 0) {
-    [section.rows[index - 1], section.rows[index]] = [section.rows[index], section.rows[index - 1]];
-  } else if (action === "move-down" && index < section.rows.length - 1) {
-    [section.rows[index + 1], section.rows[index]] = [section.rows[index], section.rows[index + 1]];
+    [currentSection.rows[index - 1], currentSection.rows[index]] = [currentSection.rows[index], currentSection.rows[index - 1]];
+  } else if (action === "move-down" && index < currentSection.rows.length - 1) {
+    [currentSection.rows[index + 1], currentSection.rows[index]] = [currentSection.rows[index], currentSection.rows[index + 1]];
   } else if (action === "delete") {
-    if (section.rows.length === 1) {
+    if (currentSection.rows.length === 1) {
       showToast("В разделе должна остаться хотя бы одна строка");
       return;
     }
-    section.rows.splice(index, 1);
+    currentSection.rows.splice(index, 1);
   }
   renderSections();
   renderSummary();
-  scheduleSave();
+  saveLocalMutationNow();
 }
 
 function deleteSection(sectionId) {
