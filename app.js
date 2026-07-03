@@ -166,7 +166,6 @@ const elements = {
   codeButton: document.querySelector("#codeButton"),
   imageButton: document.querySelector("#imageButton"),
   imageInput: document.querySelector("#imageInput"),
-  fileInput: document.querySelector("#fileInput"),
   commentImportUrl: document.querySelector("#commentImportUrl"),
   markupImportPane: document.querySelector("#markupImportPane"),
   commentImportPane: document.querySelector("#commentImportPane"),
@@ -235,6 +234,7 @@ let pendingImportedDraft = null;
 let dbPromise;
 let draggedCodeBlock = null;
 let draggedImageFigure = null;
+let rowDragAutoScroll = null;
 let pointerObjectGesture = null;
 const suppressObjectOpenUntil = new WeakMap();
 let editingCodeBlock = null;
@@ -820,6 +820,45 @@ function renderTable(fragment, section) {
 
   const tbody = fragment.querySelector("tbody");
   section.rows.forEach((row, index) => tbody.append(createRowElement(section, row, index)));
+  tbody.addEventListener("dragover", (event) => {
+    if (!hasDragType(event, "text/row-id")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    updateRowDragAutoScroll(event);
+    const rows = [...tbody.querySelectorAll("tr[data-row-id]")];
+    if (!rows.length) {
+      clearRowDropState();
+      tbody.classList.add("row-drop-empty");
+      return;
+    }
+    const lastRow = rows.at(-1);
+    if (lastRow && event.clientY > lastRow.getBoundingClientRect().bottom) {
+      clearRowDropState();
+      lastRow.classList.add("row-drop-after");
+    }
+  });
+  tbody.addEventListener("dragleave", (event) => {
+    if (!hasDragType(event, "text/row-id")) return;
+    if (event.relatedTarget && tbody.contains(event.relatedTarget)) return;
+    tbody.classList.remove("row-drop-empty");
+    clearRowDropState(tbody);
+  });
+  tbody.addEventListener("drop", (event) => {
+    const sourceId = event.dataTransfer.getData("text/row-id");
+    if (!sourceId) return;
+    const directRow = event.target.closest("tr[data-row-id]");
+    if (directRow && tbody.contains(directRow)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    tbody.classList.remove("row-drop-empty");
+    const targetRow = section.rows.at(-1);
+    if (targetRow) {
+      moveRowTo(section, sourceId, targetRow.id, true);
+    } else {
+      moveRowToSectionEnd(section, sourceId);
+    }
+    clearRowDragState();
+  });
   tableScroll?.addEventListener("scroll", () => {
     if (headerScroll) headerScroll.scrollLeft = tableScroll.scrollLeft;
     scheduleStickySectionUpdate();
@@ -874,6 +913,38 @@ function createHeader(content, html = false) {
   return th;
 }
 
+function hasDragType(event, type) {
+  return [...(event.dataTransfer?.types || [])].includes(type);
+}
+
+function clearColumnDragState() {
+  document
+    .querySelectorAll(
+      ".column-dragging, .column-drop-before, .column-drop-after, .column-drop-target",
+    )
+    .forEach((item) =>
+      item.classList.remove(
+        "column-dragging",
+        "column-drop-before",
+        "column-drop-after",
+        "column-drop-target",
+      ),
+    );
+}
+
+function setColumnDropTarget(sectionElement, columnIndex, placeAfter) {
+  sectionElement
+    ?.querySelectorAll(".column-drop-before, .column-drop-after, .column-drop-target")
+    .forEach((item) =>
+      item.classList.remove("column-drop-before", "column-drop-after", "column-drop-target"),
+    );
+  sectionElement?.querySelectorAll(`tr > *:nth-child(${columnIndex + 1})`).forEach((cell) => {
+    cell.classList.add("column-drop-target");
+    cell.classList.toggle("column-drop-before", !placeAfter);
+    cell.classList.toggle("column-drop-after", placeAfter);
+  });
+}
+
 function createColumnHeader(section, column, index) {
   const th = document.createElement("th");
   th.className = "editable-column-header";
@@ -887,8 +958,7 @@ function createColumnHeader(section, column, index) {
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/column-id", column.id);
     const sectionElement = th.closest(".check-section");
-    const cellIndex = [...th.parentElement.children].indexOf(th);
-    sectionElement?.querySelectorAll(`tr > *:nth-child(${cellIndex + 1})`).forEach((cell) => {
+    sectionElement?.querySelectorAll(`th[data-column-id="${column.id}"], td[data-column-id="${column.id}"]`).forEach((cell) => {
       cell.classList.add("column-dragging");
     });
     const ghost = document.createElement("div");
@@ -899,28 +969,27 @@ function createColumnHeader(section, column, index) {
     requestAnimationFrame(() => ghost.remove());
   });
   dragHandle.addEventListener("dragend", () => {
-    document.querySelectorAll(".column-dragging, .column-drag-over-before, .column-drag-over-after").forEach(
-      (item) => item.classList.remove("column-dragging", "column-drag-over-before", "column-drag-over-after"),
-    );
+    clearColumnDragState();
   });
   th.addEventListener("dragover", (event) => {
-    if (![...event.dataTransfer.types].includes("text/column-id")) return;
+    if (!hasDragType(event, "text/column-id")) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     const rect = th.getBoundingClientRect();
-    const after = event.clientX > rect.left + rect.width / 2;
-    th.classList.toggle("column-drag-over-before", !after);
-    th.classList.toggle("column-drag-over-after", after);
+    const placeAfter = event.clientX > rect.left + rect.width / 2;
+    const sectionElement = th.closest(".check-section");
+    const cellIndex = [...th.parentElement.children].indexOf(th);
+    setColumnDropTarget(sectionElement, cellIndex, placeAfter);
   });
   th.addEventListener("dragleave", () => {
-    th.classList.remove("column-drag-over-before", "column-drag-over-after");
+    th.classList.remove("column-drop-before", "column-drop-after", "column-drop-target");
   });
   th.addEventListener("drop", (event) => {
     const sourceId = event.dataTransfer.getData("text/column-id");
     if (!sourceId) return;
     event.preventDefault();
     event.stopPropagation();
-    th.classList.remove("column-drag-over-before", "column-drag-over-after");
+    clearColumnDragState();
     const rect = th.getBoundingClientRect();
     moveColumnTo(section, sourceId, column.id, event.clientX > rect.left + rect.width / 2);
   });
@@ -1029,12 +1098,38 @@ function createRowElement(section, row, index) {
 
   const numberCell = document.createElement("td");
   numberCell.className = "row-number";
-  numberCell.textContent = `${index + 1}.`;
+  const rowDragHandle = document.createElement("span");
+  rowDragHandle.className = "row-drag-handle";
+  rowDragHandle.textContent = "⋮⋮";
+  rowDragHandle.title = "Перетащить строку";
+  rowDragHandle.draggable = true;
+  const rowNumber = document.createElement("span");
+  rowNumber.className = "row-number-text";
+  rowNumber.textContent = `${index + 1}.`;
+  numberCell.append(rowDragHandle, rowNumber);
   tr.append(numberCell);
 
   section.columns.forEach((column) => {
     const td = document.createElement("td");
     td.className = "editor-cell";
+    td.dataset.columnId = column.id;
+    td.addEventListener("dragover", (event) => {
+      if (!hasDragType(event, "text/column-id")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const rect = td.getBoundingClientRect();
+      const sectionElement = tr.closest(".check-section");
+      setColumnDropTarget(sectionElement, [...tr.children].indexOf(td), event.clientX > rect.left + rect.width / 2);
+    });
+    td.addEventListener("drop", (event) => {
+      const sourceId = event.dataTransfer.getData("text/column-id");
+      if (!sourceId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      clearColumnDragState();
+      const rect = td.getBoundingClientRect();
+      moveColumnTo(section, sourceId, column.id, event.clientX > rect.left + rect.width / 2);
+    });
     const editor = document.createElement("div");
     editor.className = "cell-editor";
     editor.contentEditable = "true";
@@ -1089,6 +1184,37 @@ function createRowElement(section, row, index) {
   });
   actions.append(menuButton);
   tr.append(actions);
+  rowDragHandle.addEventListener("dragstart", (event) => {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/row-id", row.id);
+    tr.classList.add("row-dragging");
+  });
+  rowDragHandle.addEventListener("dragend", clearRowDragState);
+  tr.addEventListener("dragover", (event) => {
+    if (!hasDragType(event, "text/row-id")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    updateRowDragAutoScroll(event);
+    const rect = tr.getBoundingClientRect();
+    const placeAfter = event.clientY > rect.top + rect.height / 2;
+    clearRowDropState();
+    tr.classList.add(placeAfter ? "row-drop-after" : "row-drop-before");
+  });
+  tr.addEventListener("dragleave", (event) => {
+    if (!hasDragType(event, "text/row-id")) return;
+    if (event.relatedTarget && tr.contains(event.relatedTarget)) return;
+    tr.classList.remove("row-drop-before", "row-drop-after");
+  });
+  tr.addEventListener("drop", (event) => {
+    const sourceId = event.dataTransfer.getData("text/row-id");
+    if (!sourceId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = tr.getBoundingClientRect();
+    moveRowTo(section, sourceId, row.id, event.clientY > rect.top + rect.height / 2);
+    clearRowDragState();
+  });
   return tr;
 }
 
@@ -1143,12 +1269,129 @@ function moveColumnTo(section, sourceId, targetId, placeAfter = false) {
   if (!currentSection) return;
   const sourceIndex = currentSection.columns.findIndex((column) => column.id === sourceId);
   const targetIndex = currentSection.columns.findIndex((column) => column.id === targetId);
-  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  let insertionIndex = targetIndex + (placeAfter ? 1 : 0);
+  if (sourceIndex < insertionIndex) insertionIndex -= 1;
+  if (sourceIndex === insertionIndex) return;
   const [column] = currentSection.columns.splice(sourceIndex, 1);
-  const currentTargetIndex = currentSection.columns.findIndex((item) => item.id === targetId);
-  const insertionIndex = currentTargetIndex + (placeAfter ? 1 : 0);
   currentSection.columns.splice(insertionIndex, 0, column);
   renderSections();
+  saveLocalMutationNow();
+}
+
+function clearRowDropState(root = document) {
+  root
+    .querySelectorAll?.(".row-drop-before, .row-drop-after")
+    .forEach((item) => item.classList.remove("row-drop-before", "row-drop-after"));
+}
+
+function updateRowDragAutoScroll(event) {
+  const scrollElement = document.scrollingElement || document.documentElement;
+  const threshold = 96;
+  const maxSpeed = 18;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  let speed = 0;
+  if (event.clientY < threshold) {
+    speed = -Math.round(((threshold - event.clientY) / threshold) * maxSpeed);
+  } else if (viewportHeight - event.clientY < threshold) {
+    speed = Math.round(((threshold - (viewportHeight - event.clientY)) / threshold) * maxSpeed);
+  }
+
+  if (!speed) {
+    if (rowDragAutoScroll) {
+      cancelAnimationFrame(rowDragAutoScroll.frame);
+      rowDragAutoScroll = null;
+    }
+    return;
+  }
+
+  if (rowDragAutoScroll) {
+    rowDragAutoScroll.speed = speed;
+    return;
+  }
+
+  rowDragAutoScroll = { speed, frame: 0 };
+  const tick = () => {
+    if (!rowDragAutoScroll) return;
+    scrollElement.scrollTop += rowDragAutoScroll.speed;
+    rowDragAutoScroll.frame = requestAnimationFrame(tick);
+  };
+  rowDragAutoScroll.frame = requestAnimationFrame(tick);
+}
+
+function stopRowDragAutoScroll() {
+  if (!rowDragAutoScroll) return;
+  cancelAnimationFrame(rowDragAutoScroll.frame);
+  rowDragAutoScroll = null;
+}
+
+function clearRowDragState() {
+  stopRowDragAutoScroll();
+  document.querySelectorAll(".row-dragging").forEach((item) => item.classList.remove("row-dragging"));
+  document.querySelectorAll(".row-drop-empty").forEach((item) => item.classList.remove("row-drop-empty"));
+  clearRowDropState();
+}
+
+function normalizeColumnTitle(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function adaptRowCellsForSection(row, sourceSection, targetSection) {
+  if (sourceSection.id === targetSection.id) return row;
+  const sourceColumnsByTitle = new Map(
+    sourceSection.columns.map((column) => [normalizeColumnTitle(column.title), column]),
+  );
+  const usedSourceIds = new Set();
+  const mappedCells = {};
+  targetSection.columns.forEach((targetColumn, index) => {
+    let sourceColumn = sourceSection.columns.find((column) => column.id === targetColumn.id);
+    if (!sourceColumn) {
+      sourceColumn = sourceColumnsByTitle.get(normalizeColumnTitle(targetColumn.title));
+    }
+    if (!sourceColumn || usedSourceIds.has(sourceColumn.id)) {
+      sourceColumn = sourceSection.columns[index];
+    }
+    if (sourceColumn) usedSourceIds.add(sourceColumn.id);
+    mappedCells[targetColumn.id] = sourceColumn ? row.cells[sourceColumn.id] || "" : "";
+  });
+  row.cells = mappedCells;
+  return row;
+}
+
+function moveRowTo(targetSectionRef, sourceId, targetId, placeAfter = false) {
+  flushDraftFromDom();
+  const targetSection = draft.sections.find((item) => item.id === targetSectionRef.id);
+  const sourceSection = draft.sections.find((item) => item.rows.some((row) => row.id === sourceId));
+  if (!targetSection || !sourceSection) return;
+  const sourceIndex = sourceSection.rows.findIndex((row) => row.id === sourceId);
+  const targetIndex = targetSection.rows.findIndex((row) => row.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  let insertionIndex = targetIndex + (placeAfter ? 1 : 0);
+  if (sourceSection.id === targetSection.id) {
+    if (sourceIndex < insertionIndex) insertionIndex -= 1;
+    if (sourceIndex === insertionIndex) return;
+  }
+  const [row] = sourceSection.rows.splice(sourceIndex, 1);
+  adaptRowCellsForSection(row, sourceSection, targetSection);
+  targetSection.rows.splice(insertionIndex, 0, row);
+  renderSections();
+  renderSummary();
+  saveLocalMutationNow();
+}
+
+function moveRowToSectionEnd(targetSectionRef, sourceId) {
+  flushDraftFromDom();
+  const targetSection = draft.sections.find((item) => item.id === targetSectionRef.id);
+  const sourceSection = draft.sections.find((item) => item.rows.some((row) => row.id === sourceId));
+  if (!targetSection || !sourceSection) return;
+  const sourceIndex = sourceSection.rows.findIndex((row) => row.id === sourceId);
+  if (sourceIndex < 0) return;
+  if (sourceSection.id === targetSection.id && sourceIndex === sourceSection.rows.length - 1) return;
+  const [row] = sourceSection.rows.splice(sourceIndex, 1);
+  adaptRowCellsForSection(row, sourceSection, targetSection);
+  targetSection.rows.push(row);
+  renderSections();
+  renderSummary();
   saveLocalMutationNow();
 }
 
@@ -3236,13 +3479,13 @@ function createImageResizeHint() {
   hint.className = "image-resize-hint";
   hint.dataset.editorUi = "true";
   hint.contentEditable = "false";
-  hint.title = "Потяните, чтобы изменить размер";
+  hint.title = "Потяните угол, чтобы изменить размер";
   hint.setAttribute("aria-hidden", "true");
   hint.innerHTML =
-    '<svg viewBox="0 0 18 18" focusable="false">' +
-    '<path d="M14 4 4 14" />' +
-    '<path d="M14 9 9 14" />' +
-    '<path d="M14 13.5 13.5 14" />' +
+    '<svg viewBox="0 0 20 20" focusable="false">' +
+    '<path d="M6 14 14 6" />' +
+    '<path d="M10.5 6H14v3.5" />' +
+    '<path d="M9.5 14H6v-3.5" />' +
     "</svg>";
   return hint;
 }
@@ -5320,18 +5563,11 @@ elements.imageButton.addEventListener("pointerdown", () => {
 elements.imageButton.addEventListener("click", (event) => {
   event.preventDefault();
   event.stopPropagation();
-  showFloatingMenu(elements.imageButton, [
-    { label: "Изображение", icon: "paperclip", action: () => elements.imageInput.click() },
-    { label: "Файл", icon: "paperclip", action: () => elements.fileInput.click() },
-  ]);
+  elements.imageInput.click();
 });
 elements.imageInput.addEventListener("change", async () => {
   await insertAttachments(elements.imageInput.files);
   elements.imageInput.value = "";
-});
-elements.fileInput.addEventListener("change", async () => {
-  await insertAttachments(elements.fileInput.files);
-  elements.fileInput.value = "";
 });
 document.addEventListener("paste", async (event) => {
   const pasteTarget = event.target;
@@ -5485,7 +5721,7 @@ document.addEventListener("pointerdown", (event) => {
     return;
   }
   const rect = figure.getBoundingClientRect();
-  const onResizeHandle = rect.right - event.clientX <= 18 && rect.bottom - event.clientY <= 18;
+  const onResizeHandle = rect.right - event.clientX <= 26 && rect.bottom - event.clientY <= 26;
   if (onResizeHandle) {
     startImageResize(event, figure);
     return;
@@ -5564,6 +5800,7 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("dragover", (event) => {
+  if (hasDragType(event, "text/row-id")) updateRowDragAutoScroll(event);
   if (!draggedCodeBlock && !draggedImageFigure) return;
   const editor = event.target.closest?.(".cell-editor, .intro-editor");
   if (!editor) return;

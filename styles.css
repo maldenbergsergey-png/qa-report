@@ -773,8 +773,7 @@ body.section-sticky-active .editor-toolbar::after {
   gap: 2px;
 }
 
-#linkButton.toolbar-icon-button,
-#imageButton.toolbar-icon-button {
+#linkButton.toolbar-icon-button {
   width: 38px;
   min-width: 38px;
 }
@@ -1301,23 +1300,35 @@ body.section-sticky-active .editor-toolbar::after {
   cursor: grabbing;
 }
 
-.editable-column-header.column-dragging {
+.editable-column-header.column-dragging,
+.section-header-table th.column-dragging {
   position: relative;
-  opacity: 0.38;
-  background: color-mix(in srgb, var(--primary) 22%, var(--surface));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+}
+
+.check-table td.column-dragging,
+.check-table td.column-drop-target,
+.section-header-table th.column-drop-target {
+  position: relative;
 }
 
 .check-table td.column-dragging {
-  opacity: 0.42;
-  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
 }
 
-.editable-column-header.column-drag-over-before {
-  box-shadow: inset 5px 0 0 var(--primary);
+.section-header-table th.column-drop-target,
+.check-table td.column-drop-target {
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
 }
 
-.editable-column-header.column-drag-over-after {
-  box-shadow: inset -5px 0 0 var(--primary);
+.section-header-table th.column-drop-before,
+.check-table td.column-drop-before {
+  box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.section-header-table th.column-drop-after,
+.check-table td.column-drop-after {
+  box-shadow: inset -4px 0 0 var(--primary);
 }
 
 .column-drag-ghost {
@@ -1431,10 +1442,69 @@ body.section-sticky-active .editor-toolbar::after {
 }
 
 .row-number {
+  position: relative;
   padding: 14px 9px !important;
   color: var(--muted);
   text-align: center;
   font-weight: 650;
+}
+
+.row-drag-handle {
+  position: absolute;
+  top: 50%;
+  left: 5px;
+  width: 14px;
+  transform: translateY(-50%);
+  cursor: grab;
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
+  font-size: 12px;
+  letter-spacing: -2px;
+  opacity: 0;
+  user-select: none;
+  transition:
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.check-table tbody tr:hover .row-drag-handle,
+.row-drag-handle:focus,
+.row-drag-handle:active {
+  opacity: 1;
+}
+
+.row-drag-handle:active {
+  cursor: grabbing;
+  color: var(--primary);
+}
+
+.row-number-text {
+  display: inline-block;
+}
+
+.check-table tbody tr.row-dragging > td {
+  opacity: 0.42;
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+}
+
+.check-table tbody tr.row-drop-before > td {
+  box-shadow: inset 0 4px 0 var(--primary);
+}
+
+.check-table tbody tr.row-drop-after > td {
+  box-shadow: inset 0 -4px 0 var(--primary);
+}
+
+.check-table tbody.row-drop-empty::after {
+  display: block;
+  margin: 8px;
+  padding: 14px;
+  border: 2px dashed color-mix(in srgb, var(--primary) 55%, var(--line));
+  border-radius: 6px;
+  color: var(--primary);
+  content: "Перенести строку сюда";
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .cell-editor {
@@ -2560,20 +2630,21 @@ body.section-sticky-active .editor-toolbar::after {
 
 .image-resize-hint {
   position: absolute;
-  right: 7px;
-  bottom: 7px;
+  right: -1px;
+  bottom: -1px;
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--surface) 72%, var(--line));
-  border-radius: 7px;
-  color: var(--ink);
-  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface) 70%, var(--line));
+  border-radius: 8px 0 5px 0;
+  color: var(--surface);
+  background: color-mix(in srgb, #253041 88%, transparent);
   box-shadow: 0 6px 16px rgba(9, 30, 66, 0.16);
   cursor: nwse-resize;
   opacity: 0;
-  transform: translate(3px, 3px) scale(0.94);
+  pointer-events: none;
+  transform: translate(2px, 2px) scale(0.92);
   transition:
     opacity 140ms ease,
     transform 140ms ease,
@@ -2582,26 +2653,28 @@ body.section-sticky-active .editor-toolbar::after {
 }
 
 .image-resize-hint svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2;
+  stroke-width: 2.2;
 }
 
 .cell-image:hover .image-resize-hint,
 .cell-image:focus .image-resize-hint,
 .cell-image:focus-within .image-resize-hint,
 .cell-image.image-selected .image-resize-hint {
-  opacity: 0.86;
+  opacity: 0.9;
   transform: translate(0, 0) scale(1);
 }
 
-.image-resize-hint:hover {
-  color: var(--primary);
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
+.cell-image.image-selected .image-resize-hint,
+body.resizing-image .cell-image.image-selected .image-resize-hint {
+  border-color: var(--surface);
+  color: #fff;
+  background: var(--primary);
   opacity: 1;
 }
 
@@ -2820,19 +2893,6 @@ body.section-sticky-active .editor-toolbar::after {
 .cell-image.image-selected {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
-}
-
-.cell-image.image-selected::after {
-  position: absolute;
-  right: -7px;
-  bottom: -7px;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--surface);
-  border-radius: 3px;
-  background: var(--primary);
-  cursor: nwse-resize;
-  content: "";
 }
 
 body.resizing-image,
@@ -3331,8 +3391,7 @@ body.resizing-code * {
     min-width: 148px;
   }
 
-  .editor-toolbar #linkButton,
-  .editor-toolbar #imageButton {
+  .editor-toolbar #linkButton {
     width: 38px;
     min-width: 38px;
   }
