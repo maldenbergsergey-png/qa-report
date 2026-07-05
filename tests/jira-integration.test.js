@@ -457,6 +457,47 @@ async function main() {
     assert.equal(checklistPayload.issueKey, "https://company.atlassian.net/browse/ADVINTAUT2-117");
     assert.equal(checklistPayload.content.includes("Отображение кнопки Export"), true);
 
+    const heavyReportResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-QA-Report-Client-Id": "browser-heavy",
+      },
+      body: JSON.stringify({
+        document: {
+          ...reportDocument,
+          reportId: "server-report-heavy",
+          publicId: "aabbccdd",
+          intro:
+            '<p>Текст до</p><figure class="cell-image"><img src="data:image/png;base64,AAAA" /></figure><p>Текст после</p>',
+          sections: [
+            {
+              ...reportDocument.sections[0],
+              rows: [
+                {
+                  ...reportDocument.sections[0].rows[0],
+                  cells: {
+                    check:
+                      'Проверка <figure class="cell-file" data-file-name="dump.log">dump.log</figure><img src="data:image/png;base64,BBBB">',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        title: "Heavy report",
+      }),
+    });
+    assert.equal(heavyReportResponse.status, 200);
+    const heavyReportGetResponse = await fetch("http://127.0.0.1:4174/api/reports/server-report-heavy", {
+      headers: { "X-QA-Report-Client-Id": "browser-heavy" },
+    });
+    assert.equal(heavyReportGetResponse.status, 200);
+    const heavyReport = await heavyReportGetResponse.json();
+    assert.equal(JSON.stringify(heavyReport.report.document).includes("data:image"), false);
+    assert.equal(JSON.stringify(heavyReport.report.document).includes("cell-file"), false);
+    assert.equal(heavyReport.report.document.intro.includes("Текст до"), true);
+
     const unsupportedFormatResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

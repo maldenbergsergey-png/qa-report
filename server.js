@@ -36,6 +36,7 @@ const PUBLIC_ORIGIN =
   process.env.QA_REPORT_PUBLIC_URL || process.env.APP_PUBLIC_URL || process.env.PUBLIC_URL || "";
 const MAX_BODY = 30 * 1024 * 1024;
 const MAX_ATTACHMENT_FILE = 15 * 1024 * 1024;
+const STORE_REPORT_ATTACHMENTS = process.env.QA_REPORT_STORE_ATTACHMENTS === "true";
 const APP_VERSION = "0.2.2";
 const API_REVISION = 5;
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
@@ -242,6 +243,27 @@ function reportContentHash(document) {
   return stableHash(JSON.stringify(normalizedReportContent(document)));
 }
 
+function stripReportAttachmentsFromHtml(value) {
+  return String(value || "")
+    .replace(/<([a-z][a-z0-9-]*)\b[^>]*class=(["'])[^"']*\bcell-(?:image|file)\b[^"']*\2[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<img\b[^>]*>/gi, "")
+    .replace(/\s(?:src|href)=("|')data:[\s\S]*?\1/gi, "");
+}
+
+function sanitizeReportDocumentForServer(document) {
+  const copy = JSON.parse(JSON.stringify(document || {}));
+  if (STORE_REPORT_ATTACHMENTS) return copy;
+  if (typeof copy.intro === "string") copy.intro = stripReportAttachmentsFromHtml(copy.intro);
+  for (const section of copy.sections || []) {
+    for (const row of section.rows || []) {
+      for (const [columnId, value] of Object.entries(row.cells || {})) {
+        row.cells[columnId] = stripReportAttachmentsFromHtml(value);
+      }
+    }
+  }
+  return copy;
+}
+
 function firstHeader(request, names) {
   for (const name of names) {
     const value = request.headers[name.toLowerCase()];
@@ -338,7 +360,7 @@ function reportRecordFromRow(row, includeDocument = false) {
     source: "server",
   };
   if (includeDocument) {
-    record.document = JSON.parse(row.document_json);
+    record.document = sanitizeReportDocumentForServer(JSON.parse(row.document_json));
     if (record.publicId) record.document.publicId = record.publicId;
   }
   return record;
@@ -1027,7 +1049,7 @@ async function handleChecklistImportPayload(request, response, checklistId) {
 
 async function handleReportSave(request, response) {
   const body = await readJson(request);
-  const document = body.document || {};
+  const document = sanitizeReportDocumentForServer(body.document || {});
   assertReportDocument(document);
   const owner = resolveReportOwner(request);
   const now = new Date().toISOString();
@@ -1064,7 +1086,7 @@ async function handleReportSave(request, response) {
   let existingNormalizedHash = "";
   if (existing?.document_json) {
     try {
-      existingNormalizedHash = reportContentHash(JSON.parse(existing.document_json));
+      existingNormalizedHash = reportContentHash(sanitizeReportDocumentForServer(JSON.parse(existing.document_json)));
     } catch {
       existingNormalizedHash = existing.content_hash || "";
     }

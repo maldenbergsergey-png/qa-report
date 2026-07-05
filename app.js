@@ -418,8 +418,44 @@ function draftContentSnapshot(value = draft) {
   return copy;
 }
 
+function stripServerAttachmentsFromHtml(value) {
+  if (!value || typeof value !== "string") return value || "";
+  const template = document.createElement("template");
+  template.innerHTML = value;
+  template.content.querySelectorAll(".cell-image, .cell-file, img, video, audio, source").forEach((node) => {
+    node.remove();
+  });
+  template.content.querySelectorAll("*").forEach((node) => {
+    [...node.attributes].forEach((attribute) => {
+      if (/^data:/i.test(attribute.value)) node.removeAttribute(attribute.name);
+    });
+  });
+  return template.innerHTML;
+}
+
+function serverTextOnlyDocument(value = draft) {
+  const copy = clone(value);
+  copy.intro = stripServerAttachmentsFromHtml(copy.intro);
+  copy.sections?.forEach((section) => {
+    section.rows?.forEach((row) => {
+      Object.keys(row.cells || {}).forEach((columnId) => {
+        row.cells[columnId] = stripServerAttachmentsFromHtml(row.cells[columnId]);
+      });
+    });
+  });
+  return copy;
+}
+
+function serverTextOnlyDraftSnapshot(value = draft) {
+  return draftContentSnapshot(serverTextOnlyDocument(value));
+}
+
+function createServerReportDocument(value = draft) {
+  return normalizeDraft(serverTextOnlyDocument(value));
+}
+
 function draftContentHash(value = draft) {
-  return JSON.stringify(draftContentSnapshot(value));
+  return JSON.stringify(serverTextOnlyDraftSnapshot(value));
 }
 
 function hasMeaningfulContentDiff(left, right) {
@@ -723,6 +759,7 @@ function queueServerReportSave(record) {
 }
 
 function saveReportToServer(record, { force = false } = {}) {
+  const serverDocument = createServerReportDocument(record.document);
   return reportApi("/api/reports", {
     method: "POST",
     body: JSON.stringify({
@@ -739,7 +776,7 @@ function saveReportToServer(record, { force = false } = {}) {
       historyComment: record.historyComment || "",
       baseContentHash: serverReportHashes[record.id] || "",
       force,
-      document: record.document,
+      document: serverDocument,
     }),
   });
 }
