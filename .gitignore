@@ -11,6 +11,7 @@ yarn-error.log
 
 logs
 feedback-data
+reports-data
 secrets
 *.log
 

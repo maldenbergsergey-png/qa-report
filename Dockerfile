@@ -5,10 +5,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
 ENV PORT=4173
+ENV REPORTS_DB_PATH=/app/reports-data/qa-report.sqlite
 
 COPY --chown=node:node package.json ./
-COPY --chown=node:node server.js app.js index.html styles.css favicon.svg ./
-RUN mkdir -p /app/feedback-data && chown -R node:node /app/feedback-data
+COPY --chown=node:node server.js app.js jira-markup-import.js index.html styles.css favicon.svg ./
+RUN mkdir -p /app/feedback-data /app/reports-data && chown -R node:node /app/feedback-data /app/reports-data
 
 USER node
 

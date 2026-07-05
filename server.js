@@ -2,6 +2,8 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { DatabaseSync } = require("node:sqlite");
+const { parseJiraMarkup } = require("./jira-markup-import");
 
 const ROOT = __dirname;
 
@@ -30,12 +32,18 @@ loadLocalEnv();
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
+const PUBLIC_ORIGIN =
+  process.env.QA_REPORT_PUBLIC_URL || process.env.APP_PUBLIC_URL || process.env.PUBLIC_URL || "";
 const MAX_BODY = 30 * 1024 * 1024;
 const MAX_ATTACHMENT_FILE = 15 * 1024 * 1024;
 const APP_VERSION = "0.2.2";
 const API_REVISION = 5;
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
+const REPORTS_DB_PATH = process.env.REPORTS_DB_PATH || path.join(ROOT, "reports-data", "qa-report.sqlite");
 const feedbackRateLimit = new Map();
+const CHECKLIST_IMPORT_TTL_MS = 15 * 60 * 1000;
+const checklistImports = new Map();
+let reportsDb;
 
 function readSecret(name) {
   const candidates = [
@@ -73,6 +81,48 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify({ ...payload, appVersion: APP_VERSION, apiRevision: API_REVISION }));
 }
 
+function normalizeOrigin(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    return url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function firstHeaderValue(request, name) {
+  const value = request.headers[name.toLowerCase()];
+  if (Array.isArray(value)) return String(value[0] || "").trim();
+  return String(value || "").trim();
+}
+
+function forwardedHeaderParts(request) {
+  const forwarded = firstHeaderValue(request, "forwarded").split(",")[0];
+  if (!forwarded) return {};
+  return Object.fromEntries(
+    forwarded
+      .split(";")
+      .map((part) => part.trim().split("="))
+      .filter(([key, value]) => key && value)
+      .map(([key, value]) => [key.toLowerCase(), value.replace(/^"|"$/g, "")]),
+  );
+}
+
+function requestOrigin(request) {
+  const configuredOrigin = normalizeOrigin(PUBLIC_ORIGIN);
+  if (configuredOrigin) return configuredOrigin;
+
+  const forwarded = forwardedHeaderParts(request);
+  const proto = firstHeaderValue(request, "x-forwarded-proto") || forwarded.proto || "http";
+  let host = firstHeaderValue(request, "x-forwarded-host") || forwarded.host || firstHeaderValue(request, "host");
+  const port = firstHeaderValue(request, "x-forwarded-port");
+  if (host && port && !host.includes(":")) host = `${host}:${port}`;
+  host ||= `${HOST}:${PORT}`;
+  return `${String(proto).split(",")[0]}://${String(host).split(",")[0]}`;
+}
+
 async function readJson(request) {
   const chunks = [];
   let size = 0;
@@ -82,6 +132,229 @@ async function readJson(request) {
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+}
+
+function cleanupChecklistImports() {
+  const now = Date.now();
+  for (const [id, item] of checklistImports) {
+    if (item.expiresAt <= now) checklistImports.delete(id);
+  }
+}
+
+function getReportsDb() {
+  if (reportsDb) return reportsDb;
+  fs.mkdirSync(path.dirname(REPORTS_DB_PATH), { recursive: true });
+  reportsDb = new DatabaseSync(REPORTS_DB_PATH);
+  reportsDb.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS reports (
+      id TEXT NOT NULL,
+      owner_source TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      owner_label TEXT NOT NULL DEFAULT '',
+      workspace_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      issue_url TEXT NOT NULL DEFAULT '',
+      issue_key TEXT NOT NULL DEFAULT '',
+      environment TEXT NOT NULL DEFAULT '',
+      overall_status TEXT NOT NULL DEFAULT '',
+      schema_version INTEGER NOT NULL DEFAULT 3,
+      public_id TEXT NOT NULL DEFAULT '',
+      content_hash TEXT NOT NULL DEFAULT '',
+      history_comment TEXT NOT NULL DEFAULT '',
+      document_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_opened_at TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      deleted_at TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (owner_source, owner_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reports_owner_updated
+      ON reports(owner_source, owner_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_reports_workspace_updated
+      ON reports(workspace_id, updated_at DESC);
+  `);
+  const columns = reportsDb.prepare("PRAGMA table_info(reports)").all().map((column) => column.name);
+  if (!columns.includes("content_hash")) {
+    reportsDb.exec("ALTER TABLE reports ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columns.includes("history_comment")) {
+    reportsDb.exec("ALTER TABLE reports ADD COLUMN history_comment TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columns.includes("public_id")) {
+    reportsDb.exec("ALTER TABLE reports ADD COLUMN public_id TEXT NOT NULL DEFAULT ''");
+  }
+  reportsDb.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_owner_public_id
+      ON reports(owner_source, owner_id, public_id)
+      WHERE public_id <> '';
+  `);
+  return reportsDb;
+}
+
+function stableHash(value) {
+  return crypto.createHash("sha256").update(String(value || "")).digest("hex");
+}
+
+function generatePublicId() {
+  return crypto.randomBytes(4).toString("hex");
+}
+
+function normalizePublicId(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-f0-9]/g, "").slice(0, 8);
+}
+
+function ensurePublicId(owner, preferred = "", currentId = "") {
+  const db = getReportsDb();
+  let publicId = normalizePublicId(preferred);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!publicId || publicId.length < 7) publicId = generatePublicId();
+    const row = db
+      .prepare(
+        "SELECT id FROM reports WHERE owner_source = ? AND owner_id = ? AND public_id = ? LIMIT 1",
+      )
+      .get(owner.source, owner.id, publicId);
+    if (!row || row.id === currentId) return publicId;
+    publicId = "";
+  }
+  return crypto.randomBytes(5).toString("hex").slice(0, 8);
+}
+
+function normalizedReportContent(document) {
+  const copy = JSON.parse(JSON.stringify(document || {}));
+  delete copy.revision;
+  delete copy.updatedAt;
+  delete copy.lastSavedBy;
+  delete copy.lastSavedClientId;
+  delete copy.tabId;
+  delete copy.clientId;
+  delete copy.browserId;
+  delete copy.selectedCell;
+  delete copy.focus;
+  delete copy.scroll;
+  delete copy.syncTimestamps;
+  return copy;
+}
+
+function reportContentHash(document) {
+  return stableHash(JSON.stringify(normalizedReportContent(document)));
+}
+
+function firstHeader(request, names) {
+  for (const name of names) {
+    const value = request.headers[name.toLowerCase()];
+    if (Array.isArray(value) && value[0]) return String(value[0]).trim();
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function normalizeIdentityPart(value, fallback = "") {
+  return String(value || fallback)
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f]/g, "")
+    .trim()
+    .slice(0, 300);
+}
+
+function resolveReportOwner(request) {
+  const ssoValue = normalizeIdentityPart(
+    firstHeader(request, [
+      "x-forwarded-email",
+      "x-auth-request-email",
+      "x-forwarded-user",
+      "x-auth-request-user",
+      "remote-user",
+    ]),
+  );
+  if (ssoValue) {
+    return {
+      source: "sso",
+      id: ssoValue.toLowerCase(),
+      label: ssoValue,
+      workspaceId: "sso",
+    };
+  }
+
+  const workspaceKey = normalizeIdentityPart(firstHeader(request, ["x-qa-report-workspace-key"]));
+  if (workspaceKey) {
+    const workspaceHash = stableHash(workspaceKey).slice(0, 32);
+    return {
+      source: "workspace-key",
+      id: workspaceHash,
+      label: "Ключ пространства",
+      workspaceId: `workspace:${workspaceHash}`,
+    };
+  }
+
+  const clientId = normalizeIdentityPart(firstHeader(request, ["x-qa-report-client-id"]));
+  if (clientId) {
+    return {
+      source: "browser",
+      id: clientId.slice(0, 120),
+      label: "Этот браузер",
+      workspaceId: `browser:${clientId.slice(0, 120)}`,
+    };
+  }
+
+  const anonymousId = stableHash(request.socket.remoteAddress || "anonymous").slice(0, 32);
+  return {
+    source: "anonymous",
+    id: anonymousId,
+    label: "Анонимный доступ",
+    workspaceId: `anonymous:${anonymousId}`,
+  };
+}
+
+function issueKeyFromUrl(value) {
+  try {
+    return new URL(String(value || "")).pathname.match(/\/browse\/([A-Z][A-Z0-9_]*-\d+)/i)?.[1]?.toUpperCase() || "";
+  } catch {
+    return "";
+  }
+}
+
+function reportRecordFromRow(row, includeDocument = false) {
+  const record = {
+    id: row.id,
+    publicId: row.public_id || "",
+    ownerSource: row.owner_source,
+    ownerLabel: row.owner_label,
+    workspaceId: row.workspace_id,
+    title: row.title,
+    issueUrl: row.issue_url,
+    issueKey: row.issue_key,
+    environment: row.environment,
+    overallStatus: row.overall_status,
+    schemaVersion: row.schema_version,
+    contentHash: row.content_hash,
+    historyComment: row.history_comment || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastOpenedAt: row.last_opened_at,
+    reason: row.reason,
+    source: "server",
+  };
+  if (includeDocument) {
+    record.document = JSON.parse(row.document_json);
+    if (record.publicId) record.document.publicId = record.publicId;
+  }
+  return record;
+}
+
+function assertReportDocument(document) {
+  if (!document || typeof document !== "object" || Array.isArray(document)) {
+    const error = new Error("Поле document должно быть JSON-объектом отчёта");
+    error.status = 400;
+    throw error;
+  }
+  if (!Array.isArray(document.sections)) {
+    const error = new Error("В document.sections должен быть список разделов");
+    error.status = 400;
+    throw error;
+  }
 }
 
 function normalizeConnection(input) {
@@ -677,6 +950,313 @@ async function handleJiraImportComment(request, response) {
   });
 }
 
+async function handleChecklistImport(request, response) {
+  const body = await readJson(request);
+  if (body.format !== "jira") {
+    const error = new Error('Поддерживается только format: "jira"');
+    error.status = 400;
+    throw error;
+  }
+  if (typeof body.content !== "string" || !body.content.trim()) {
+    const error = new Error("Поле content должно быть непустой строкой с Jira-разметкой");
+    error.status = 400;
+    throw error;
+  }
+
+  let parsed;
+  try {
+    parsed = parseJiraMarkup(body.content);
+  } catch (parseError) {
+    const error = new Error(parseError.message || "Не удалось распарсить Jira-разметку");
+    error.status = 422;
+    throw error;
+  }
+
+  const checklistId = crypto.randomUUID();
+  const publicId = generatePublicId();
+  const now = new Date().toISOString();
+  checklistImports.set(checklistId, {
+    id: checklistId,
+    publicId,
+    source: String(body.source || "").slice(0, 120),
+    format: "jira",
+    title: String(body.title || "").trim().slice(0, 300),
+    issueKey: String(body.issueKey || "").trim().slice(0, 2000),
+    content: body.content,
+    createdAt: now,
+    expiresAt: Date.now() + CHECKLIST_IMPORT_TTL_MS,
+  });
+  cleanupChecklistImports();
+
+  const url = new URL(`/report/${publicId}`, requestOrigin(request));
+  url.searchParams.set("importToken", checklistId);
+  sendJson(response, 201, {
+    ok: true,
+    checklistId,
+    publicId,
+    url: url.toString(),
+    expiresAt: checklistImports.get(checklistId).expiresAt,
+    parsed: {
+      sections: parsed.sections.length,
+      rows: parsed.sections.reduce((sum, section) => sum + section.rows.length, 0),
+    },
+  });
+}
+
+async function handleChecklistImportPayload(request, response, checklistId) {
+  cleanupChecklistImports();
+  const item = checklistImports.get(checklistId);
+  if (!item) {
+    const error = new Error("Импорт не найден или срок действия ссылки истёк");
+    error.status = 404;
+    throw error;
+  }
+  sendJson(response, 200, {
+    ok: true,
+    checklistId: item.id,
+    publicId: item.publicId || "",
+    source: item.source,
+    format: item.format,
+    title: item.title,
+    issueKey: item.issueKey,
+    content: item.content,
+    createdAt: item.createdAt,
+    expiresAt: item.expiresAt,
+  });
+}
+
+async function handleReportSave(request, response) {
+  const body = await readJson(request);
+  const document = body.document || {};
+  assertReportDocument(document);
+  const owner = resolveReportOwner(request);
+  const now = new Date().toISOString();
+  const id = normalizeIdentityPart(body.id || document.reportId || crypto.randomUUID()).slice(0, 120);
+  if (!id) {
+    const error = new Error("Не удалось определить идентификатор отчёта");
+    error.status = 400;
+    throw error;
+  }
+  const existing = getReportsDb()
+    .prepare(`
+      SELECT id, public_id, owner_source, owner_label, workspace_id, title, issue_url, issue_key,
+        environment, overall_status, schema_version, content_hash, history_comment, created_at, updated_at,
+        last_opened_at, reason, document_json
+      FROM reports
+      WHERE id = ? AND owner_source = ? AND owner_id = ? AND deleted_at = ''
+    `)
+    .get(id, owner.source, owner.id);
+  const issueUrl = String(body.issueUrl ?? document.issueUrl ?? "").trim().slice(0, 2000);
+  const issueKey = String(body.issueKey || issueKeyFromUrl(issueUrl)).trim().slice(0, 80);
+  const environment = String(body.environment ?? document.environment ?? "").trim().slice(0, 120);
+  const overallStatus = String(body.overallStatus ?? document.overallStatus ?? "").trim().slice(0, 80);
+  const title = String(body.title || `${issueKey || "Без задачи"} — ${environment || "Окружение не указано"}`)
+    .trim()
+    .slice(0, 500);
+  const schemaVersion = Number(body.schemaVersion || document.schemaVersion || 3) || 3;
+  const reason = String(body.reason || "").trim().slice(0, 120);
+  const historyComment = String(body.historyComment ?? existing?.history_comment ?? "").trim().slice(0, 1000);
+  const publicId = ensurePublicId(owner, body.publicId || document.publicId || existing?.public_id || "", id);
+  document.publicId = publicId;
+  const documentJson = JSON.stringify(document);
+  const contentHash = reportContentHash(document);
+  const baseContentHash = String(body.baseContentHash || "").trim();
+  let existingNormalizedHash = "";
+  if (existing?.document_json) {
+    try {
+      existingNormalizedHash = reportContentHash(JSON.parse(existing.document_json));
+    } catch {
+      existingNormalizedHash = existing.content_hash || "";
+    }
+  }
+  if (
+    existing?.content_hash &&
+    existing.content_hash !== contentHash &&
+    existing.content_hash !== baseContentHash &&
+    existingNormalizedHash !== contentHash &&
+    !body.force
+  ) {
+    sendJson(response, 409, {
+      error: "Серверная версия отчёта изменилась. Сохранение остановлено, чтобы не перезаписать чужие изменения.",
+      conflict: true,
+      report: reportRecordFromRow(existing, true),
+    });
+    return;
+  }
+  const createdAt = existing?.created_at || body.createdAt || now;
+  getReportsDb()
+    .prepare(`
+      INSERT INTO reports (
+        id, public_id, owner_source, owner_id, owner_label, workspace_id, title, issue_url, issue_key,
+        environment, overall_status, schema_version, content_hash, history_comment, document_json, created_at, updated_at,
+        last_opened_at, reason, deleted_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+      ON CONFLICT(owner_source, owner_id, id) DO UPDATE SET
+        public_id = excluded.public_id,
+        owner_source = excluded.owner_source,
+        owner_id = excluded.owner_id,
+        owner_label = excluded.owner_label,
+        workspace_id = excluded.workspace_id,
+        title = excluded.title,
+        issue_url = excluded.issue_url,
+        issue_key = excluded.issue_key,
+        environment = excluded.environment,
+        overall_status = excluded.overall_status,
+        schema_version = excluded.schema_version,
+        content_hash = excluded.content_hash,
+        history_comment = excluded.history_comment,
+        document_json = excluded.document_json,
+        updated_at = excluded.updated_at,
+        last_opened_at = excluded.last_opened_at,
+        reason = excluded.reason,
+        deleted_at = ''
+    `)
+    .run(
+      id,
+      publicId,
+      owner.source,
+      owner.id,
+      owner.label,
+      owner.workspaceId,
+      title,
+      issueUrl,
+      issueKey,
+      environment,
+      overallStatus,
+      schemaVersion,
+      contentHash,
+      historyComment,
+      documentJson,
+      createdAt,
+      now,
+      now,
+      reason,
+    );
+  sendJson(response, 200, {
+    ok: true,
+    report: {
+      id,
+      publicId,
+      ownerSource: owner.source,
+      ownerLabel: owner.label,
+      workspaceId: owner.workspaceId,
+      title,
+      issueUrl,
+      issueKey,
+      environment,
+      overallStatus,
+      schemaVersion,
+      contentHash,
+      historyComment,
+      createdAt,
+      updatedAt: now,
+      lastOpenedAt: now,
+      reason,
+      source: "server",
+    },
+  });
+}
+
+async function handleReportsList(request, response) {
+  const owner = resolveReportOwner(request);
+  const rows = getReportsDb()
+    .prepare(`
+      SELECT id, public_id, owner_source, owner_label, workspace_id, title, issue_url, issue_key,
+        environment, overall_status, schema_version, content_hash, history_comment, created_at, updated_at,
+        last_opened_at, reason, document_json
+      FROM reports
+      WHERE owner_source = ? AND owner_id = ? AND deleted_at = ''
+      ORDER BY updated_at DESC
+      LIMIT 200
+    `)
+    .all(owner.source, owner.id);
+  for (const row of rows) {
+    if (!row.public_id) {
+      row.public_id = ensurePublicId(owner);
+      getReportsDb()
+        .prepare("UPDATE reports SET public_id = ? WHERE id = ? AND owner_source = ? AND owner_id = ?")
+        .run(row.public_id, row.id, owner.source, owner.id);
+    }
+  }
+  sendJson(response, 200, {
+    ok: true,
+    owner: { source: owner.source, label: owner.label, workspaceId: owner.workspaceId },
+    reports: rows.map((row) => reportRecordFromRow(row, false)),
+  });
+}
+
+async function handleReportGet(request, response, reportId) {
+  const owner = resolveReportOwner(request);
+  const row = getReportsDb()
+    .prepare(`
+      SELECT id, public_id, owner_source, owner_label, workspace_id, title, issue_url, issue_key,
+        environment, overall_status, schema_version, content_hash, history_comment, created_at, updated_at,
+        last_opened_at, reason, document_json
+      FROM reports
+      WHERE (id = ? OR public_id = ?) AND owner_source = ? AND owner_id = ? AND deleted_at = ''
+    `)
+    .get(reportId, reportId, owner.source, owner.id);
+  if (!row) {
+    const error = new Error("Отчёт не найден в серверной истории");
+    error.status = 404;
+    throw error;
+  }
+  const now = new Date().toISOString();
+  if (!row.public_id) {
+    row.public_id = ensurePublicId(owner);
+    getReportsDb()
+      .prepare("UPDATE reports SET public_id = ? WHERE id = ? AND owner_source = ? AND owner_id = ?")
+      .run(row.public_id, row.id, owner.source, owner.id);
+  }
+  getReportsDb()
+    .prepare("UPDATE reports SET last_opened_at = ? WHERE id = ? AND owner_source = ? AND owner_id = ?")
+    .run(now, row.id, owner.source, owner.id);
+  row.last_opened_at = now;
+  sendJson(response, 200, { ok: true, report: reportRecordFromRow(row, true) });
+}
+
+async function handleReportCommentUpdate(request, response, reportId) {
+  const body = await readJson(request);
+  const owner = resolveReportOwner(request);
+  const historyComment = String(body.historyComment || "").slice(0, 1000);
+  const now = new Date().toISOString();
+  const result = getReportsDb()
+    .prepare(
+      "UPDATE reports SET history_comment = ?, updated_at = ? WHERE id = ? AND owner_source = ? AND owner_id = ? AND deleted_at = ''",
+    )
+    .run(historyComment, now, reportId, owner.source, owner.id);
+  if (!result.changes) {
+    const error = new Error("Отчёт не найден в серверной истории");
+    error.status = 404;
+    throw error;
+  }
+  sendJson(response, 200, { ok: true, reportId, historyComment, updatedAt: now });
+}
+
+async function handleReportDelete(request, response, reportId) {
+  const owner = resolveReportOwner(request);
+  const now = new Date().toISOString();
+  const result = getReportsDb()
+    .prepare("UPDATE reports SET deleted_at = ?, updated_at = ? WHERE id = ? AND owner_source = ? AND owner_id = ? AND deleted_at = ''")
+    .run(now, now, reportId, owner.source, owner.id);
+  if (!result.changes) {
+    const error = new Error("Отчёт не найден в серверной истории");
+    error.status = 404;
+    throw error;
+  }
+  sendJson(response, 200, { ok: true, deleted: true, reportId });
+}
+
+async function handleReportsClear(request, response) {
+  const owner = resolveReportOwner(request);
+  const now = new Date().toISOString();
+  const result = getReportsDb()
+    .prepare("UPDATE reports SET deleted_at = ?, updated_at = ? WHERE owner_source = ? AND owner_id = ? AND deleted_at = ''")
+    .run(now, now, owner.source, owner.id);
+  sendJson(response, 200, { ok: true, deleted: result.changes || 0 });
+}
+
 async function handleJiraAttachments(request, response) {
   const body = await readJson(request);
   const connection = normalizeConnection(body);
@@ -908,7 +1488,8 @@ async function handleFeedback(request, response) {
 
 function serveStatic(request, response) {
   const requestPath = new URL(request.url, "http://localhost").pathname;
-  const relative = requestPath === "/" ? "index.html" : decodeURIComponent(requestPath.slice(1));
+  const isReportRoute = /^\/report\/[a-f0-9]{7,8}$/i.test(requestPath);
+  const relative = requestPath === "/" || isReportRoute ? "index.html" : decodeURIComponent(requestPath.slice(1));
   const filePath = path.resolve(ROOT, relative);
   if (!filePath.startsWith(`${ROOT}${path.sep}`) && filePath !== path.join(ROOT, "index.html")) {
     response.writeHead(403);
@@ -936,6 +1517,32 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, { ok: true, service: "qa-report" });
       return;
     }
+    if (request.method === "GET" && requestPath === "/api/reports") {
+      await handleReportsList(request, response);
+      return;
+    }
+    if (request.method === "POST" && requestPath === "/api/reports") {
+      await handleReportSave(request, response);
+      return;
+    }
+    if (request.method === "DELETE" && requestPath === "/api/reports") {
+      await handleReportsClear(request, response);
+      return;
+    }
+    const reportMatch = requestPath.match(/^\/api\/reports\/([A-Za-z0-9_.:-]+)$/);
+    const reportCommentMatch = requestPath.match(/^\/api\/reports\/([A-Za-z0-9_.:-]+)\/comment$/);
+    if (reportCommentMatch && request.method === "PATCH") {
+      await handleReportCommentUpdate(request, response, reportCommentMatch[1]);
+      return;
+    }
+    if (reportMatch && request.method === "GET") {
+      await handleReportGet(request, response, reportMatch[1]);
+      return;
+    }
+    if (reportMatch && request.method === "DELETE") {
+      await handleReportDelete(request, response, reportMatch[1]);
+      return;
+    }
     if (request.method === "POST" && requestPath === "/api/jira/test") {
       await handleJiraTest(request, response);
       return;
@@ -946,6 +1553,15 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "POST" && requestPath === "/api/jira/import-comment") {
       await handleJiraImportComment(request, response);
+      return;
+    }
+    if (request.method === "POST" && requestPath === "/api/checklists/import") {
+      await handleChecklistImport(request, response);
+      return;
+    }
+    const checklistImportMatch = requestPath.match(/^\/api\/checklists\/import\/([0-9a-f-]+)$/i);
+    if (request.method === "GET" && checklistImportMatch) {
+      await handleChecklistImportPayload(request, response, checklistImportMatch[1]);
       return;
     }
     if (request.method === "POST" && requestPath === "/api/jira/attachments") {

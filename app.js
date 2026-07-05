@@ -2,6 +2,10 @@ const STORAGE_KEY = "qa-report-editor-draft-v2";
 const DRAFT_SYNC_CHANNEL = "qa-report-draft-sync-v1";
 const JIRA_SETTINGS_KEY = "qa-report-jira-settings-v1";
 const STORAGE_SETTINGS_KEY = "qa-report-storage-settings-v1";
+const CLIENT_ID_KEY = "qa-report-client-id-v1";
+const WORKSPACE_KEY_STORAGE_KEY = "qa-report-workspace-key-v1";
+const SERVER_HASHES_KEY = "qa-report-server-hashes-v1";
+const DISMISSED_CLOUD_HASHES_KEY = "qa-report-dismissed-cloud-hashes-v1";
 const DB_NAME = "qa-report-editor";
 const DB_VERSION = 1;
 const REPORT_STORE = "reports";
@@ -9,6 +13,7 @@ const HISTORY_LIMIT = 50;
 const REQUIRED_API_REVISION = 5;
 const FILE_ATTACHMENT_MAX_SIZE = 15 * 1024 * 1024;
 const ATTACHMENT_UPLOAD_BATCH_SIZE = 1;
+const { parseJiraMarkup, normalizeStatus } = window.QaReportJiraImport;
 
 const STATUS_META = {
   OK: { className: "status-ok", color: "#22a06b", jiraColor: "#14892c" },
@@ -56,10 +61,12 @@ function createSection(title = "Основные проверки", columns = DE
 const DEFAULT_DRAFT = {
   draftId: crypto.randomUUID(),
   reportId: crypto.randomUUID(),
+  publicId: createPublicId(),
   schemaVersion: 3,
   revision: 0,
   updatedAt: new Date(0).toISOString(),
   lastSavedBy: "",
+  lastSavedClientId: "",
   issueUrl: "",
   environment: "STAGE",
   overallStatus: "OK",
@@ -126,8 +133,10 @@ const elements = {
   closeJiraSettingsButton: document.querySelector("#closeJiraSettingsButton"),
   settingsJiraSectionButton: document.querySelector("#settingsJiraSectionButton"),
   settingsFilesSectionButton: document.querySelector("#settingsFilesSectionButton"),
+  settingsHistorySectionButton: document.querySelector("#settingsHistorySectionButton"),
   settingsJiraSection: document.querySelector("#settingsJiraSection"),
   settingsFilesSection: document.querySelector("#settingsFilesSection"),
+  settingsHistorySection: document.querySelector("#settingsHistorySection"),
   jiraManualTab: document.querySelector("#jiraManualTab"),
   jiraCurlTab: document.querySelector("#jiraCurlTab"),
   jiraManualPane: document.querySelector("#jiraManualPane"),
@@ -154,6 +163,9 @@ const elements = {
   googleStorageToken: document.querySelector("#googleStorageToken"),
   googleStorageFolder: document.querySelector("#googleStorageFolder"),
   storageConnectionState: document.querySelector("#storageConnectionState"),
+  reportClientId: document.querySelector("#reportClientId"),
+  reportWorkspaceKey: document.querySelector("#reportWorkspaceKey"),
+  reportIdentityState: document.querySelector("#reportIdentityState"),
   undoButton: document.querySelector("#undoButton"),
   redoButton: document.querySelector("#redoButton"),
   historyButton: document.querySelector("#historyButton"),
@@ -207,8 +219,22 @@ const elements = {
   feedbackError: document.querySelector("#feedbackError"),
   feedbackState: document.querySelector("#feedbackState"),
   draftSyncBanner: document.querySelector("#draftSyncBanner"),
-  draftSyncUpdateButton: document.querySelector("#draftSyncUpdateButton"),
-  draftSyncKeepButton: document.querySelector("#draftSyncKeepButton"),
+  cloudConflictStatus: document.querySelector("#cloudConflictStatus"),
+  versionConflictModal: document.querySelector("#versionConflictModal"),
+  closeVersionConflictFooterButton: document.querySelector("#closeVersionConflictFooterButton"),
+  localVersionPanel: document.querySelector("#localVersionPanel"),
+  cloudVersionPanel: document.querySelector("#cloudVersionPanel"),
+  localVersionSummary: document.querySelector("#localVersionSummary"),
+  cloudVersionSummary: document.querySelector("#cloudVersionSummary"),
+  localVersionPreview: document.querySelector("#localVersionPreview"),
+  cloudVersionPreview: document.querySelector("#cloudVersionPreview"),
+  selectLocalVersionButton: document.querySelector("#selectLocalVersionButton"),
+  selectCloudVersionButton: document.querySelector("#selectCloudVersionButton"),
+  saveBothVersionsButton: document.querySelector("#saveBothVersionsButton"),
+  saveVersionChoiceButton: document.querySelector("#saveVersionChoiceButton"),
+  versionCopyChoiceModal: document.querySelector("#versionCopyChoiceModal"),
+  openLocalCopyButton: document.querySelector("#openLocalCopyButton"),
+  openCloudCopyButton: document.querySelector("#openCloudCopyButton"),
 };
 
 const tabId = crypto.randomUUID();
@@ -224,6 +250,10 @@ let jiraSecret = "";
 let jiraSettings = loadJiraSettings();
 let storageSecrets = { yandex: "", google: "" };
 let storageSettings = loadStorageSettings();
+let reportClientId = loadReportClientId();
+let reportWorkspaceKey = loadReportWorkspaceKey();
+let serverReportHashes = loadServerReportHashes();
+let dismissedCloudHashes = loadDismissedCloudHashes();
 let undoStack = [];
 let redoStack = [];
 let historyCurrent = "";
@@ -250,6 +280,11 @@ let hasUnsavedLocalChanges = false;
 let applyingRemoteDraft = false;
 let forceLocalDraftSave = false;
 let pendingRemoteDraft = null;
+let syncRecovery = null;
+let versionConflictChoice = "";
+let pendingCopyChoice = null;
+let suppressNextServerSave = false;
+const historyCommentTimers = new Map();
 
 applyTheme(localStorage.getItem("qa-report-theme") || "light");
 historyCurrent = serializeDraft();
@@ -258,23 +293,112 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function createPublicId() {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function normalizePublicId(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-f0-9]/g, "").slice(0, 8);
+}
+
+function shortHashFromString(value) {
+  let hash = 2166136261;
+  for (const char of String(value || "")) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0").slice(0, 8);
+}
+
+function reportPublicId(report) {
+  return (
+    normalizePublicId(report?.publicId || report?.document?.publicId) ||
+    shortHashFromString(report?.id || report?.document?.reportId || "")
+  );
+}
+
+function isDefaultColumnTitle(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return !normalized || normalized === "новый столбец" || /^столбец \d+$/i.test(normalized);
+}
+
+function preserveKnownColumnMetadata(nextDraft, baseDraft = draft) {
+  const next = normalizeDraft(nextDraft);
+  const baseSections = new Map(normalizeDraft(baseDraft).sections.map((section) => [section.id, section]));
+  next.sections.forEach((section) => {
+    const baseSection = baseSections.get(section.id);
+    if (!baseSection) return;
+    const baseColumns = new Map(baseSection.columns.map((column) => [column.id, column]));
+    section.columns.forEach((column) => {
+      const baseColumn = baseColumns.get(column.id);
+      if (!baseColumn) return;
+      if (isDefaultColumnTitle(column.title) && !isDefaultColumnTitle(baseColumn.title)) {
+        column.title = baseColumn.title;
+      }
+      ["name", "width", "required", "type"].forEach((key) => {
+        if ((column[key] === undefined || column[key] === "" || column[key] === null) && baseColumn[key] !== undefined) {
+          column[key] = baseColumn[key];
+        }
+      });
+    });
+  });
+  return next;
+}
+
+function normalizeSections(sections) {
+  return clone(sections).map((section, sectionIndex) => {
+    const columns = (Array.isArray(section.columns) && section.columns.length ? section.columns : DEFAULT_COLUMNS).map(
+      (column, columnIndex) => ({
+        ...column,
+        id: column.id || `column-${crypto.randomUUID()}`,
+        title: String(column.title || column.name || "").trim() || `Столбец ${columnIndex + 1}`,
+      }),
+    );
+    return {
+      ...section,
+      id: section.id || crypto.randomUUID(),
+      title: String(section.title || "").trim() || `Раздел ${sectionIndex + 1}`,
+      collapsed: Boolean(section.collapsed),
+      columns,
+      rows: (Array.isArray(section.rows) && section.rows.length ? section.rows : [createRow(columns)]).map((row) => {
+        const cells = { ...(row.cells || {}) };
+        columns.forEach((column) => {
+          if (!Object.hasOwn(cells, column.id)) cells[column.id] = "";
+        });
+        return {
+          ...row,
+          id: row.id || crypto.randomUUID(),
+          status: row.status || "НЕ ПРОВЕРЕНО",
+          cells,
+        };
+      }),
+    };
+  });
+}
+
 function normalizeDraft(value) {
   const base = clone(DEFAULT_DRAFT);
   const parsed = value && typeof value === "object" ? value : {};
+  const publicId = normalizePublicId(parsed.publicId) || createPublicId();
+  const sections =
+    Array.isArray(parsed.sections) && parsed.sections.length
+      ? normalizeSections(parsed.sections)
+      : normalizeSections(base.sections);
   return {
     ...base,
     ...parsed,
     draftId: parsed.draftId || parsed.reportId || crypto.randomUUID(),
     reportId: parsed.reportId || crypto.randomUUID(),
+    publicId,
     schemaVersion: 3,
     revision: Number(parsed.revision) || 0,
     updatedAt: parsed.updatedAt || new Date(0).toISOString(),
     lastSavedBy: parsed.lastSavedBy || "",
+    lastSavedClientId: parsed.lastSavedClientId || "",
     issueUrl: parsed.issueUrl || "",
-    sections:
-      Array.isArray(parsed.sections) && parsed.sections.length
-        ? clone(parsed.sections)
-        : clone(base.sections),
+    sections,
   };
 }
 
@@ -283,7 +407,23 @@ function draftContentSnapshot(value = draft) {
   delete copy.revision;
   delete copy.updatedAt;
   delete copy.lastSavedBy;
+  delete copy.lastSavedClientId;
+  delete copy.tabId;
+  delete copy.clientId;
+  delete copy.browserId;
+  delete copy.selectedCell;
+  delete copy.focus;
+  delete copy.scroll;
+  delete copy.syncTimestamps;
   return copy;
+}
+
+function draftContentHash(value = draft) {
+  return JSON.stringify(draftContentSnapshot(value));
+}
+
+function hasMeaningfulContentDiff(left, right) {
+  return draftContentHash(left) !== draftContentHash(right);
 }
 
 function isNewerDraft(candidate, current = draft) {
@@ -304,6 +444,10 @@ function isSameDraftLineage(candidate, current = draft) {
   if (candidate.draftId && current.draftId) return candidate.draftId === current.draftId;
   if (candidate.reportId && current.reportId) return candidate.reportId === current.reportId;
   return false;
+}
+
+function isSavedByThisBrowser(candidate) {
+  return Boolean(candidate?.lastSavedClientId && candidate.lastSavedClientId === reportClientId);
 }
 
 function setSaveStatus(status, { saving = false } = {}) {
@@ -356,6 +500,113 @@ function loadStorageSettings() {
   }
 }
 
+function loadReportClientId() {
+  try {
+    const saved = localStorage.getItem(CLIENT_ID_KEY);
+    if (saved) return saved;
+    const created = crypto.randomUUID();
+    localStorage.setItem(CLIENT_ID_KEY, created);
+    return created;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+function loadReportWorkspaceKey() {
+  try {
+    return localStorage.getItem(WORKSPACE_KEY_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function loadServerReportHashes() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SERVER_HASHES_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function loadDismissedCloudHashes() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DISMISSED_CLOUD_HASHES_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveServerReportHashes() {
+  try {
+    localStorage.setItem(SERVER_HASHES_KEY, JSON.stringify(serverReportHashes));
+  } catch {
+    // Hash-кэш нужен только для оптимистичной синхронизации. Если localStorage недоступен, сервер всё равно защитит от перезаписи.
+  }
+}
+
+function saveDismissedCloudHashes() {
+  try {
+    localStorage.setItem(DISMISSED_CLOUD_HASHES_KEY, JSON.stringify(dismissedCloudHashes));
+  } catch {
+    // Dismissed hash влияет только на повторный показ уведомления.
+  }
+}
+
+function dismissCloudHash(reportId, contentHash) {
+  if (!reportId || !contentHash) return;
+  dismissedCloudHashes[reportId] = contentHash;
+  saveDismissedCloudHashes();
+}
+
+function clearDismissedCloudHash(reportId) {
+  if (!reportId || !dismissedCloudHashes[reportId]) return;
+  delete dismissedCloudHashes[reportId];
+  saveDismissedCloudHashes();
+}
+
+function isCloudHashDismissed(reportId, contentHash) {
+  return Boolean(reportId && contentHash && dismissedCloudHashes[reportId] === contentHash);
+}
+
+function setKnownServerHash(reportId, contentHash) {
+  if (!reportId || !contentHash) return;
+  serverReportHashes[reportId] = contentHash;
+  saveServerReportHashes();
+}
+
+function forgetKnownServerHash(reportId) {
+  if (!reportId || !serverReportHashes[reportId]) return;
+  delete serverReportHashes[reportId];
+  saveServerReportHashes();
+}
+
+function reportIdentityHeaders() {
+  const headers = { "X-QA-Report-Client-Id": reportClientId };
+  if (reportWorkspaceKey.trim()) headers["X-QA-Report-Workspace-Key"] = reportWorkspaceKey.trim();
+  return headers;
+}
+
+async function reportApi(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      ...reportIdentityHeaders(),
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
 function openDatabase() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
@@ -405,6 +656,7 @@ async function saveReportSnapshot(reason = "manual") {
   const issueKey = issueKeyFromUrl(draft.issueUrl);
   const record = {
     id: draft.reportId,
+    publicId: draft.publicId,
     title: `${issueKey || "Без задачи"} — ${draft.environment}`,
     issueUrl: draft.issueUrl,
     issueKey,
@@ -414,12 +666,82 @@ async function saveReportSnapshot(reason = "manual") {
     updatedAt: now,
     lastOpenedAt: now,
     reason,
+    historyComment: existing?.historyComment || "",
     document: clone(draft),
     schemaVersion: 3,
   };
   await dbTransaction("readwrite", (store) => store.put(record));
+  if (suppressNextServerSave) {
+    suppressNextServerSave = false;
+  } else {
+    queueServerReportSave(record);
+  }
   await trimReportHistory();
   return record;
+}
+
+function queueServerReportSave(record) {
+  saveReportToServer(record)
+    .then((result) => {
+      if (result.report?.contentHash) {
+        setKnownServerHash(record.id, result.report.contentHash);
+        clearDismissedCloudHash(record.id);
+      }
+      if (result.report?.publicId && draft.reportId === record.id) {
+        draft.publicId = result.report.publicId;
+        updateChecklistUrl();
+      }
+    })
+    .catch((error) => {
+      if (error.status === 409) {
+        const serverReport = error.payload?.report;
+        const serverHash = serverReport?.contentHash;
+        if (serverReport?.document) {
+          if (isSavedByThisBrowser(serverReport.document)) {
+            if (!hasUnsavedLocalChanges && serializeDraft() === historyCurrent) {
+              if (serverHash) setKnownServerHash(record.id, serverHash);
+              applyDraftLocally(serverReport.document, { status: "Сохранено" });
+            }
+            return;
+          }
+          if (!isCloudHashDismissed(record.id, serverHash)) {
+            showSyncRecovery({
+              localDraft: record.document,
+              serverDraft: serverReport.document,
+              serverHash,
+            });
+          }
+          hideDraftSyncBanner();
+        }
+        setSaveStatus("Локально сохранено");
+        if (!isCloudHashDismissed(record.id, serverHash)) {
+          showToast("Облачная версия изменилась. Локальная копия сохранена, облако не перезаписано.", 9000);
+        }
+      }
+      // Серверная история дополняет локальную. Если сервер недоступен, редактор продолжает работать.
+    });
+}
+
+function saveReportToServer(record, { force = false } = {}) {
+  return reportApi("/api/reports", {
+    method: "POST",
+    body: JSON.stringify({
+      id: record.id,
+      publicId: record.publicId,
+      title: record.title,
+      issueUrl: record.issueUrl,
+      issueKey: record.issueKey,
+      environment: record.environment,
+      overallStatus: record.overallStatus,
+      schemaVersion: record.schemaVersion,
+      createdAt: record.createdAt,
+      reason: record.reason,
+      historyComment: record.historyComment || "",
+      baseContentHash: serverReportHashes[record.id] || "",
+      force,
+      document: record.document,
+    }),
+  });
 }
 
 async function getReportRecord(id) {
@@ -434,11 +756,90 @@ async function getReportRecord(id) {
 async function getAllReports() {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const request = db.transaction(REPORT_STORE, "readonly").objectStore(REPORT_STORE).getAll();
-    request.onsuccess = () =>
-      resolve((request.result || []).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    const transaction = db.transaction(REPORT_STORE, "readwrite");
+    const store = transaction.objectStore(REPORT_STORE);
+    const request = store.getAll();
+    let reports = [];
+    request.onsuccess = () => {
+      reports = (request.result || []).map((report) => {
+        const publicId = normalizePublicId(report.publicId || report.document?.publicId) || createPublicId();
+        if (report.publicId !== publicId || report.document?.publicId !== publicId) {
+          report.publicId = publicId;
+          if (report.document) report.document.publicId = publicId;
+          store.put(report);
+        }
+        return report;
+      });
+    };
+    transaction.oncomplete = () => resolve(reports.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+    transaction.onerror = () => reject(transaction.error);
     request.onerror = () => reject(request.error);
   });
+}
+
+async function getServerReports() {
+  try {
+    const result = await reportApi("/api/reports");
+    return (result.reports || []).map((report) => ({ ...report, source: "server" }));
+  } catch {
+    return [];
+  }
+}
+
+async function getServerReport(id, { rememberHash = true } = {}) {
+  const result = await reportApi(`/api/reports/${encodeURIComponent(id)}`);
+  if (rememberHash && result.report?.contentHash) setKnownServerHash(result.report.id, result.report.contentHash);
+  return result.report || null;
+}
+
+function routeChecklistPublicId() {
+  const pathMatch = window.location.pathname.match(/^\/report\/([a-f0-9]{7,8})$/i);
+  const hashMatch = window.location.hash.match(/^#\/checklists\/([a-f0-9]{7,8})$/i);
+  return normalizePublicId(pathMatch?.[1] || hashMatch?.[1] || "");
+}
+
+function updateChecklistUrl(publicId = draft.publicId, { replace = true } = {}) {
+  const normalized = normalizePublicId(publicId);
+  if (!normalized) return;
+  const next = `/report/${normalized}`;
+  if (window.location.pathname === next && !window.location.search && !window.location.hash) return;
+  if (replace) window.history.replaceState({}, "", next);
+  else window.history.pushState({}, "", next);
+}
+
+async function findLocalReportByPublicId(publicId) {
+  const reports = await getAllReports().catch(() => []);
+  return reports.find((report) => normalizePublicId(report.publicId || report.document?.publicId) === publicId) || null;
+}
+
+async function openReportFromRoute() {
+  const publicId = routeChecklistPublicId();
+  if (!publicId) {
+    updateChecklistUrl(draft.publicId);
+    return;
+  }
+  try {
+    const localReport = await findLocalReportByPublicId(publicId);
+    const fullReport = localReport || (await getServerReport(publicId));
+    if (!fullReport?.document) throw new Error("not-found");
+    applyDraftLocally(fullReport.document, { status: "Сохранено" });
+  } catch {
+    showToast("Чек-лист по ссылке не найден. Можно создать новый.");
+  }
+}
+
+async function getAllHistoryReports() {
+  const [serverReports, localReports] = await Promise.all([
+    getServerReports(),
+    getAllReports().catch(() => []),
+  ]);
+  const seen = new Set(serverReports.map((report) => report.id));
+  return [
+    ...serverReports,
+    ...localReports
+      .filter((report) => !seen.has(report.id))
+      .map((report) => ({ ...report, source: "local" })),
+  ].sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 }
 
 async function getFreshestStoredDraft() {
@@ -461,6 +862,31 @@ async function deleteReportRecord(id) {
   await dbTransaction("readwrite", (store) => store.delete(id));
 }
 
+async function deleteServerReport(id) {
+  await reportApi(`/api/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+  forgetKnownServerHash(id);
+}
+
+async function updateLocalReportComment(id, historyComment) {
+  const record = await getReportRecord(id);
+  if (!record) return;
+  record.historyComment = String(historyComment || "").slice(0, 1000);
+  await dbTransaction("readwrite", (store) => store.put(record));
+}
+
+async function updateServerReportComment(id, historyComment) {
+  await reportApi(`/api/reports/${encodeURIComponent(id)}/comment`, {
+    method: "PATCH",
+    body: JSON.stringify({ historyComment }),
+  });
+}
+
+async function clearServerReports() {
+  await reportApi("/api/reports", { method: "DELETE" });
+  serverReportHashes = {};
+  saveServerReportHashes();
+}
+
 async function trimReportHistory() {
   const reports = await getAllReports();
   for (const report of reports.slice(HISTORY_LIMIT)) await deleteReportRecord(report.id);
@@ -476,8 +902,16 @@ async function saveDraft() {
     const stored = await getFreshestStoredDraft();
     if (stored && isNewerDraft(stored)) {
       if (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent) {
-        showDraftSyncBanner(stored);
-        setSaveStatus("Конфликт");
+        if (isSavedByThisBrowser(stored)) {
+          applyRemoteDraft(stored);
+          return false;
+        }
+        showSyncRecovery({
+          localDraft: draft,
+          serverDraft: stored,
+          serverHash: "",
+        });
+        setSaveStatus("Есть облачная версия");
         return false;
       }
       applyRemoteDraft(stored);
@@ -489,6 +923,7 @@ async function saveDraft() {
     draft.revision = (Number(draft.revision) || 0) + 1;
     draft.updatedAt = new Date().toISOString();
     draft.lastSavedBy = tabId;
+    draft.lastSavedClientId = reportClientId;
   }
   let localStorageSaved = true;
   try {
@@ -513,14 +948,23 @@ function flushPendingDraftSave() {
   if (!applyingRemoteDraft) {
     const stored = readStoredDraft();
     if (stored && isNewerDraft(stored) && (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent)) {
-      showDraftSyncBanner(stored);
-      setSaveStatus("Конфликт");
+      if (isSavedByThisBrowser(stored)) {
+        applyRemoteDraft(stored);
+        return false;
+      }
+      showSyncRecovery({
+        localDraft: draft,
+        serverDraft: stored,
+        serverHash: "",
+      });
+      setSaveStatus("Есть облачная версия");
       return false;
     }
     draft = normalizeDraft(draft);
     draft.revision = (Number(draft.revision) || 0) + 1;
     draft.updatedAt = new Date().toISOString();
     draft.lastSavedBy = tabId;
+    draft.lastSavedClientId = reportClientId;
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
@@ -557,19 +1001,205 @@ function readStoredDraft() {
   }
 }
 
-function showDraftSyncBanner(remoteDraft) {
-  pendingRemoteDraft = normalizeDraft(remoteDraft);
-  elements.draftSyncBanner.hidden = false;
-  setSaveStatus("Конфликт");
-}
-
 function hideDraftSyncBanner() {
   pendingRemoteDraft = null;
-  elements.draftSyncBanner.hidden = true;
+  if (elements.draftSyncBanner) elements.draftSyncBanner.hidden = true;
 }
 
-function applyRemoteDraft(remoteDraft) {
-  const normalized = normalizeDraft(remoteDraft);
+function showSyncRecovery({ localDraft, serverDraft, serverHash }) {
+  if (!localDraft || !serverDraft) return;
+  const safeServerDraft = preserveKnownColumnMetadata(serverDraft, localDraft);
+  if (!hasMeaningfulContentDiff(localDraft, safeServerDraft)) {
+    if (serverHash) setKnownServerHash(draft.reportId, serverHash);
+    hideSyncRecovery();
+    return;
+  }
+  syncRecovery = {
+    localDraft: normalizeDraft(localDraft),
+    serverDraft: safeServerDraft,
+    serverHash: serverHash || serverReportHashes[draft.reportId] || "",
+  };
+  updateCloudConflictStatus();
+  if (!elements.versionConflictModal.hidden) renderVersionConflictModal();
+}
+
+function updateCloudConflictStatus() {
+  elements.cloudConflictStatus.hidden = !syncRecovery;
+}
+
+function hideSyncRecovery() {
+  syncRecovery = null;
+  updateCloudConflictStatus();
+  closeVersionConflictModal();
+}
+
+function formatVersionTime(value) {
+  const timestamp = Date.parse(value || "");
+  if (!timestamp) return "нет данных";
+  return new Date(timestamp).toLocaleString("ru-RU");
+}
+
+function countDraftAttachments(value) {
+  const draftValue = normalizeDraft(value);
+  let count = 0;
+  const countInHtml = (html) => {
+    if (!html) return;
+    count += (String(html).match(/<figure\b[^>]*class="[^"]*\bcell-image\b/gi) || []).length;
+    count += (String(html).match(/<span\b[^>]*class="[^"]*\bcell-file\b/gi) || []).length;
+  };
+  countInHtml(draftValue.intro);
+  draftValue.sections.forEach((section) => {
+    section.rows.forEach((row) => Object.values(row.cells || {}).forEach(countInHtml));
+  });
+  return count;
+}
+
+function getDraftStats(value) {
+  const draftValue = normalizeDraft(value);
+  return {
+    updatedAt: formatVersionTime(draftValue.updatedAt),
+    revision: Number(draftValue.revision) || 0,
+    sections: draftValue.sections.length,
+    rows: draftValue.sections.reduce((sum, section) => sum + section.rows.length, 0),
+    attachments: countDraftAttachments(draftValue),
+  };
+}
+
+function renderVersionSummary(target, stats) {
+  target.innerHTML = [
+    ["Изменена", stats.updatedAt],
+    ["Revision", stats.revision],
+    ["Разделы", stats.sections],
+    ["Строки", stats.rows],
+    ["Вложения", stats.attachments],
+  ]
+    .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd></div>`)
+    .join("");
+}
+
+function cellText(value) {
+  return htmlToText(value || "").replace(/\s+/g, " ").trim();
+}
+
+function getVersionDiffItems(localDraft, cloudDraft) {
+  const local = normalizeDraft(localDraft);
+  const cloud = normalizeDraft(cloudDraft);
+  const items = [];
+  if ((local.issueUrl || "") !== (cloud.issueUrl || "")) items.push("Отличается ссылка на задачу.");
+  if ((local.environment || "") !== (cloud.environment || "")) items.push("Отличается окружение.");
+  if ((local.overallStatus || "") !== (cloud.overallStatus || "")) items.push("Отличается итоговый статус.");
+  if (cellText(local.intro) !== cellText(cloud.intro)) items.push("Отличается вводный текст.");
+  if (local.sections.length !== cloud.sections.length) {
+    items.push(`Количество разделов: локально ${local.sections.length}, в облаке ${cloud.sections.length}.`);
+  }
+  const sectionCount = Math.max(local.sections.length, cloud.sections.length);
+  for (let sectionIndex = 0; sectionIndex < sectionCount; sectionIndex += 1) {
+    const localSection = local.sections[sectionIndex];
+    const cloudSection = cloud.sections[sectionIndex];
+    if (!localSection || !cloudSection) continue;
+    const sectionName = localSection.title || cloudSection.title || `Раздел ${sectionIndex + 1}`;
+    if ((localSection.title || "") !== (cloudSection.title || "")) {
+      items.push(`Раздел ${sectionIndex + 1}: отличается название.`);
+    }
+    if (localSection.rows.length !== cloudSection.rows.length) {
+      items.push(
+        `${sectionName}: строк локально ${localSection.rows.length}, в облаке ${cloudSection.rows.length}.`,
+      );
+    }
+    const rowCount = Math.max(localSection.rows.length, cloudSection.rows.length);
+    let changedRows = 0;
+    for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+      const localRow = localSection.rows[rowIndex];
+      const cloudRow = cloudSection.rows[rowIndex];
+      if (!localRow || !cloudRow) {
+        changedRows += 1;
+        continue;
+      }
+      const localRowSnapshot = JSON.stringify({
+        status: localRow.status,
+        cells: Object.fromEntries(Object.entries(localRow.cells || {}).map(([key, value]) => [key, cellText(value)])),
+      });
+      const cloudRowSnapshot = JSON.stringify({
+        status: cloudRow.status,
+        cells: Object.fromEntries(Object.entries(cloudRow.cells || {}).map(([key, value]) => [key, cellText(value)])),
+      });
+      if (localRowSnapshot !== cloudRowSnapshot) changedRows += 1;
+    }
+    if (changedRows) items.push(`${sectionName}: отличается строк ${changedRows}.`);
+  }
+  return items.slice(0, 8);
+}
+
+function renderVersionConflictModal() {
+  if (!syncRecovery) return;
+  collectDocumentFields();
+  syncRecovery.localDraft = normalizeDraft(draft);
+  if (!hasMeaningfulContentDiff(syncRecovery.localDraft, syncRecovery.serverDraft)) {
+    elements.localVersionSummary.innerHTML = "<div><dt>Статус</dt><dd>Отличий не найдено</dd></div>";
+    elements.cloudVersionSummary.innerHTML = "<div><dt>Статус</dt><dd>Отличий не найдено</dd></div>";
+    elements.localVersionPreview.innerHTML = '<div class="history-empty">Отличий не найдено</div>';
+    elements.cloudVersionPreview.innerHTML = '<div class="history-empty">Отличий не найдено</div>';
+    versionConflictChoice = "";
+    updateVersionConflictSelection();
+    return;
+  }
+  versionConflictChoice = "";
+  renderVersionSummary(elements.localVersionSummary, getDraftStats(syncRecovery.localDraft));
+  renderVersionSummary(elements.cloudVersionSummary, getDraftStats(syncRecovery.serverDraft));
+  elements.localVersionPreview.innerHTML = generateVisualPreview(syncRecovery.localDraft, syncRecovery.serverDraft);
+  elements.cloudVersionPreview.innerHTML = generateVisualPreview(syncRecovery.serverDraft, syncRecovery.localDraft);
+  updateVersionConflictSelection();
+}
+
+function setVersionConflictChoice(choice) {
+  if (!syncRecovery) return;
+  versionConflictChoice = choice;
+  updateVersionConflictSelection();
+}
+
+function updateVersionConflictSelection() {
+  const localSelected = versionConflictChoice === "local" || versionConflictChoice === "both";
+  const cloudSelected = versionConflictChoice === "cloud" || versionConflictChoice === "both";
+  elements.localVersionPanel.classList.toggle("selected", localSelected);
+  elements.cloudVersionPanel.classList.toggle("selected", cloudSelected);
+  elements.selectLocalVersionButton.classList.toggle("active", versionConflictChoice === "local");
+  elements.selectCloudVersionButton.classList.toggle("active", versionConflictChoice === "cloud");
+  elements.saveBothVersionsButton.classList.toggle("active", versionConflictChoice === "both");
+  elements.saveVersionChoiceButton.disabled = !versionConflictChoice;
+}
+
+function openVersionConflictModal() {
+  if (!syncRecovery) return;
+  renderVersionConflictModal();
+  elements.versionConflictModal.hidden = false;
+  document.body.style.overflow = "hidden";
+}
+
+function closeVersionConflictModal() {
+  elements.versionConflictModal.hidden = true;
+  if (
+    elements.previewModal.hidden &&
+    elements.importModal.hidden &&
+    elements.historyModal.hidden &&
+    elements.mediaViewerModal.hidden &&
+    elements.codeEditorModal.hidden &&
+    elements.confirmModal.hidden &&
+    elements.feedbackModal.hidden &&
+    elements.jiraSettingsModal.hidden &&
+    elements.versionCopyChoiceModal.hidden
+  ) {
+    document.body.style.overflow = "";
+  }
+}
+
+function closeVersionCopyChoiceModal() {
+  elements.versionCopyChoiceModal.hidden = true;
+  pendingCopyChoice = null;
+  if (elements.versionConflictModal.hidden) document.body.style.overflow = "";
+}
+
+function applyDraftLocally(nextDraft, { status = "Сохранено" } = {}) {
+  const normalized = normalizeDraft(nextDraft);
   applyingRemoteDraft = true;
   clearTimeout(saveTimer);
   clearTimeout(historyTimer);
@@ -584,10 +1214,29 @@ function applyRemoteDraft(remoteDraft) {
   undoStack = [];
   redoStack = [];
   render();
+  updateChecklistUrl(draft.publicId);
   updateHistoryButtons();
-  setSaveStatus("Сохранено");
+  setSaveStatus(status);
   hideDraftSyncBanner();
   applyingRemoteDraft = false;
+}
+
+function applyRemoteDraft(remoteDraft) {
+  applyDraftLocally(remoteDraft);
+}
+
+function applyServerReport(report, { silent = false, keepRecovery = true } = {}) {
+  const localDraft = clone(draft);
+  if (report?.contentHash) setKnownServerHash(report.id, report.contentHash);
+  applyDraftLocally(report.document);
+  if (keepRecovery) {
+    showSyncRecovery({
+      localDraft,
+      serverDraft: report.document,
+      serverHash: report.contentHash || "",
+    });
+  }
+  if (!silent) showToast("Подтянута свежая облачная версия");
 }
 
 function keepCurrentDraft() {
@@ -600,15 +1249,169 @@ function keepCurrentDraft() {
   saveDraft();
 }
 
+function applyCloudVersionFromRecovery() {
+  if (!syncRecovery) return;
+  const { serverDraft, serverHash } = syncRecovery;
+  const reportId = serverDraft.reportId || draft.reportId;
+  if (serverHash) {
+    setKnownServerHash(reportId, serverHash);
+    clearDismissedCloudHash(reportId);
+  }
+  applyDraftLocally(serverDraft, { status: "Сохранено" });
+  hideSyncRecovery();
+  suppressNextServerSave = true;
+  saveReportSnapshot("cloud-sync").catch(() => {});
+  showToast("Облачная версия подтянута");
+}
+
+function keepLocalVersionFromRecovery() {
+  if (!syncRecovery) return;
+  dismissCloudHash(draft.reportId, syncRecovery.serverHash);
+  hideSyncRecovery();
+  setSaveStatus("Локальная версия");
+  showToast("Оставлена локальная версия");
+}
+
+async function overwriteCloudWithLocalVersion() {
+  if (!syncRecovery) return;
+  flushDraftFromDom();
+  const now = new Date().toISOString();
+  draft = normalizeDraft({
+    ...draft,
+    revision: (Number(draft.revision) || 0) + 1,
+    updatedAt: now,
+    lastSavedBy: tabId,
+    lastSavedClientId: reportClientId,
+  });
+  const existing = await getReportRecord(draft.reportId);
+  const issueKey = issueKeyFromUrl(draft.issueUrl);
+  const record = {
+    id: draft.reportId,
+    title: `${issueKey || "Без задачи"} — ${draft.environment}`,
+    issueUrl: draft.issueUrl,
+    issueKey,
+    environment: draft.environment,
+    overallStatus: draft.overallStatus,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    lastOpenedAt: now,
+    reason: "overwrite-cloud",
+    historyComment: existing?.historyComment || "",
+    document: clone(draft),
+    schemaVersion: 3,
+  };
+  await dbTransaction("readwrite", (store) => store.put(record));
+  const result = await saveReportToServer(record, { force: true });
+  if (result.report?.contentHash) {
+    setKnownServerHash(record.id, result.report.contentHash);
+    clearDismissedCloudHash(record.id);
+  }
+  historyCurrent = serializeDraft();
+  hasUnsavedLocalChanges = false;
+  broadcastDraftUpdate();
+  hideSyncRecovery();
+  setSaveStatus("Сохранено");
+  showToast("Локальная версия сохранена в облако");
+}
+
+function createConflictCopy(sourceDraft, label, historyComment) {
+  const copy = normalizeDraft(clone(sourceDraft));
+  copy.draftId = crypto.randomUUID();
+  copy.reportId = crypto.randomUUID();
+  copy.publicId = createPublicId();
+  copy.revision = 0;
+  copy.updatedAt = new Date(0).toISOString();
+  copy.lastSavedBy = "";
+  copy.lastSavedClientId = "";
+  return { draft: copy, label, historyComment };
+}
+
+async function saveDraftCopyToHistory(copyItem) {
+  const copyDraft = normalizeDraft(copyItem.draft);
+  const now = new Date().toISOString();
+  copyDraft.updatedAt = now;
+  copyDraft.lastSavedBy = tabId;
+  copyDraft.lastSavedClientId = reportClientId;
+  const issueKey = issueKeyFromUrl(copyDraft.issueUrl);
+  const record = {
+    id: copyDraft.reportId,
+    publicId: copyDraft.publicId,
+    title: `${issueKey || "Без задачи"} — ${copyDraft.environment}`,
+    issueUrl: copyDraft.issueUrl,
+    issueKey,
+    environment: copyDraft.environment,
+    overallStatus: copyDraft.overallStatus,
+    createdAt: now,
+    updatedAt: now,
+    lastOpenedAt: now,
+    reason: "version-copy",
+    historyComment: copyItem.historyComment,
+    document: clone(copyDraft),
+    schemaVersion: 3,
+  };
+  await dbTransaction("readwrite", (store) => store.put(record));
+  await saveReportToServer(record, { force: true }).then((result) => {
+    if (result.report?.contentHash) setKnownServerHash(record.id, result.report.contentHash);
+  });
+  return { ...copyItem, draft: copyDraft, record };
+}
+
+async function saveBothVersionsFromConflict() {
+  if (!syncRecovery) return;
+  flushDraftFromDom();
+  const localCopy = createConflictCopy(draft, "local-copy", "Локальная версия");
+  const savedLocal = await saveDraftCopyToHistory(localCopy);
+  const cloudDraft = normalizeDraft(syncRecovery.serverDraft);
+  const cloudId = cloudDraft.reportId || draft.reportId;
+  if (syncRecovery.serverHash) setKnownServerHash(cloudId, syncRecovery.serverHash);
+  dismissCloudHash(cloudId, syncRecovery.serverHash);
+  hideSyncRecovery();
+  pendingCopyChoice = {
+    local: savedLocal,
+    cloud: {
+      draft: cloudDraft,
+      record: {
+        id: cloudId,
+        publicId: cloudDraft.publicId,
+        contentHash: syncRecovery.serverHash || serverReportHashes[cloudId] || "",
+      },
+    },
+  };
+  elements.versionCopyChoiceModal.hidden = false;
+  document.body.style.overflow = "hidden";
+  showToast("Локальная версия сохранена отдельной копией");
+}
+
+async function openSavedConflictCopy(which) {
+  if (!pendingCopyChoice?.[which]) return;
+  const selected = pendingCopyChoice[which];
+  applyDraftLocally(selected.draft, { status: "Сохранено" });
+  setKnownServerHash(selected.record.id, serverReportHashes[selected.record.id] || "");
+  closeVersionCopyChoiceModal();
+  await saveReportSnapshot("open-version-copy").catch(() => {});
+  showToast(which === "local" ? "Открыта локальная версия" : "Открыта версия из облака");
+}
+
+async function saveVersionConflictChoice() {
+  if (!versionConflictChoice) return;
+  if (versionConflictChoice === "cloud") {
+    applyCloudVersionFromRecovery();
+    return;
+  }
+  if (versionConflictChoice === "local") {
+    await overwriteCloudWithLocalVersion();
+    return;
+  }
+  if (versionConflictChoice === "both") {
+    await saveBothVersionsFromConflict();
+  }
+}
+
 function handleRemoteDraftUpdate(remoteDraft) {
-  const normalized = normalizeDraft(remoteDraft);
+  const normalized = preserveKnownColumnMetadata(remoteDraft, draft);
   if (normalized.lastSavedBy === tabId || normalized.tabId === tabId) return;
   if (!isSameDraftLineage(normalized)) return;
   if (!isNewerDraft(normalized)) return;
-  if (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent) {
-    showDraftSyncBanner(normalized);
-    return;
-  }
   applyRemoteDraft(normalized);
 }
 
@@ -616,6 +1419,48 @@ async function checkStoredDraftFreshness() {
   flushDraftFromDom();
   const stored = await getFreshestStoredDraft();
   if (stored) handleRemoteDraftUpdate(stored);
+  await checkServerDraftFreshness();
+}
+
+async function checkServerDraftFreshness() {
+  if (!draft?.reportId) return;
+  try {
+    const knownHash = serverReportHashes[draft.reportId] || "";
+    const report = await getServerReport(draft.reportId, { rememberHash: false });
+    if (!report?.document || !isSameDraftLineage(report.document)) return;
+    const serverDraft = normalizeDraft(report.document);
+    if (!hasMeaningfulContentDiff(draft, serverDraft)) {
+      if (report.contentHash) setKnownServerHash(draft.reportId, report.contentHash);
+      return;
+    }
+    if (!report.contentHash || report.contentHash === knownHash) return;
+    if (isCloudHashDismissed(draft.reportId, report.contentHash)) return;
+    if (!isNewerDraft(serverDraft)) return;
+    if (isSavedByThisBrowser(serverDraft)) {
+      if (!hasUnsavedLocalChanges && serializeDraft() === historyCurrent) {
+        setKnownServerHash(draft.reportId, report.contentHash);
+        applyDraftLocally(serverDraft, { status: "Сохранено" });
+      }
+      return;
+    }
+    if (hasUnsavedLocalChanges || serializeDraft() !== historyCurrent) {
+      showSyncRecovery({
+        localDraft: draft,
+        serverDraft,
+        serverHash: report.contentHash || "",
+      });
+      setSaveStatus("Есть облачная версия");
+      return;
+    }
+    showSyncRecovery({
+      localDraft: draft,
+      serverDraft,
+      serverHash: report.contentHash || "",
+    });
+    setSaveStatus("Есть облачная версия");
+  } catch {
+    // Проверка облачной свежести не блокирует локальную работу.
+  }
 }
 
 function scheduleSave() {
@@ -703,6 +1548,7 @@ function collectDocumentFields() {
   draft.environment = elements.environment.value.trim() || "Не указано";
   draft.overallStatus = elements.overallStatus.value;
   draft.intro = cleanEditorHtml(elements.introEditor);
+  collectSectionsFromDom();
 }
 
 function collectSectionsFromDom() {
@@ -726,7 +1572,6 @@ function collectSectionsFromDom() {
 
 function flushDraftFromDom() {
   collectDocumentFields();
-  collectSectionsFromDom();
 }
 
 function render() {
@@ -1886,195 +2731,6 @@ function balanceJiraColorMarkup(value) {
   return output;
 }
 
-function splitWikiRow(line) {
-  const delimiter = line.startsWith("||") ? "||" : "|";
-  const source = line.slice(delimiter.length, line.endsWith(delimiter) ? -delimiter.length : undefined);
-  const cells = [];
-  let current = "";
-  let escaped = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    if (escaped) {
-      current += character === "|" ? "|" : `\\${character}`;
-      escaped = false;
-    } else if (character === "\\") {
-      escaped = true;
-    } else if (source.startsWith(delimiter, index)) {
-      cells.push(current);
-      current = "";
-      index += delimiter.length - 1;
-    } else current += character;
-  }
-  cells.push(current);
-  return cells;
-}
-
-function collectWikiTableRow(lines, startIndex, expectedCells) {
-  let row = lines[startIndex].trim();
-  let index = startIndex;
-  while (
-    expectedCells &&
-    splitWikiRow(row).length < expectedCells &&
-    index + 1 < lines.length
-  ) {
-    const next = lines[index + 1];
-    const trimmed = next.trim();
-    if (/^h[1-6]\.\s+/i.test(trimmed) || trimmed.startsWith("|")) break;
-    row += `\n${next}`;
-    index += 1;
-  }
-  return { row, index };
-}
-
-function wikiInlineToHtml(value, attachments = []) {
-  const codeBlocks = [];
-  let source = String(value || "").replace(
-    /\{code(?::(?:language=)?([^}]+))?\}([\s\S]*?)\{code\}/gi,
-    (_, language, code) => {
-      const token = `@@CODE${codeBlocks.length}@@`;
-      codeBlocks.push(
-        `<pre class="cell-code-block" data-language="${escapeHtml(language || "text")}"><code>${escapeHtml(code.trim())}</code></pre>`,
-      );
-      return token;
-    },
-  );
-  const attachmentByName = new Map(attachments.map((item) => [item.filename, item]));
-  return escapeHtml(source)
-    .replace(/\\\\/g, "<br>")
-    .replace(/!([^|!\n]+)(?:\|[^!]*)?!/g, (_, filename) => {
-      const attachment = attachmentByName.get(filename);
-      if (!attachment?.content && !attachment?.thumbnail) return `<span>[Изображение: ${filename}]</span>`;
-      const src = attachment.thumbnail || attachment.content;
-      return `<figure class="cell-image" contenteditable="false" data-align="left"><img src="${escapeHtml(src)}" alt="" data-attachment-id="${escapeHtml(attachment.id)}" data-file-name="${escapeHtml(filename)}" data-jira-name="${escapeHtml(filename)}" data-jira-id="${escapeHtml(attachment.id)}" data-jira-url="${escapeHtml(attachment.content || "")}"></figure>`;
-    })
-    .replace(/\[([^\]|]+)\|([^\]]+)\]/g, '<a href="$2">$1</a>')
-    .replace(
-      /\{color:(#[0-9a-f]{3,8})\}([\s\S]*?)\{color\}/gi,
-      '<span style="color:$1">$2</span>',
-    )
-    .replace(/\*([^*\n]+)\*/g, "<strong>$1</strong>")
-    .replace(/_([^_\n]+)_/g, "<em>$1</em>")
-    .replace(/\+([^+\n]+)\+/g, "<u>$1</u>")
-    .replace(/@@CODE(\d+)@@/g, (_, index) => codeBlocks[Number(index)] || "");
-}
-
-function normalizeStatus(value) {
-  const status = String(value || "")
-    .replace(/\{color:[^}]+\}|\{color\}|[*_+]/g, "")
-    .trim()
-    .toUpperCase();
-  if (status === "OK" || status === "ОК") return "OK";
-  if (["НЕ ОК", "НЕ OK", "НЕОК"].includes(status)) return "НЕ ОК";
-  if (["НА ДОРАБОТКУ", "FAILED", "FAIL"].includes(status)) return "НЕ ОК";
-  if (["ПОЧТИ ОК", "ПОЧТИ OK"].includes(status)) return "ПОЧТИ ОК";
-  if (status === "ЧАСТИЧНО ПРОВЕРЕНО") return status;
-  if (status === "ТРЕБУЕТ УТОЧНЕНИЯ") return status;
-  return "НЕ ПРОВЕРЕНО";
-}
-
-function parseJiraMarkup(markup, attachments = []) {
-  const lines = String(markup || "").replace(/\r/g, "").split("\n");
-  const imported = {
-    reportId: crypto.randomUUID(),
-    schemaVersion: 3,
-    issueUrl: "",
-    environment: "STAGE",
-    overallStatus: "OK",
-    intro: "",
-    sections: [],
-  };
-  const introLines = [];
-  let pendingTitle = "";
-  let currentSection = null;
-  let headers = null;
-  let tableNumber = 0;
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const rawLine = lines[lineIndex];
-    const line = rawLine.trim();
-    if (!line) {
-      if (!headers) introLines.push("");
-      continue;
-    }
-    const issue = line.match(/^\*?Задача:\*?\s*(.+)$/i);
-    if (issue) {
-      continue;
-    }
-    const environment = line.match(/(?:Проверено\s+на|Окружение)\s*:?\s*([A-Za-zА-Яа-яЁё-]+)/i);
-    if (environment) {
-      const value = environment[1].toUpperCase();
-      imported.environment = ["DEV", "STAGE", "PROD"].includes(value) ? value : "Локально";
-      continue;
-    }
-    const overall = line.match(/(?:ТЕСТ\s*[-—]|Статус\s*:)\s*(.+?)\*?$/i);
-    if (overall) {
-      imported.overallStatus = normalizeStatus(overall[1]);
-      continue;
-    }
-    if (/^h1\.\s+/i.test(line)) continue;
-    if (/^h[23]\.\s+/i.test(line)) {
-      pendingTitle = line.replace(/^h[23]\.\s+/i, "").trim();
-      headers = null;
-      currentSection = null;
-      continue;
-    }
-    if (line.startsWith("||")) {
-      tableNumber += 1;
-      const rawHeaders = splitWikiRow(line).map((header) => header.trim());
-      const numberIndex = rawHeaders.findIndex((header) => /^(номер|№)$/i.test(header));
-      const statusIndex = rawHeaders.findIndex((header) => /статус/i.test(header));
-      const columns = rawHeaders
-        .map((title, index) => ({ title, index }))
-        .filter(({ index }) => index !== numberIndex && index !== statusIndex)
-        .map(({ title, index }) => ({
-          id: `import-${tableNumber}-${index}-${crypto.randomUUID()}`,
-          title: title || `Столбец ${index + 1}`,
-          sourceIndex: index,
-        }));
-      currentSection = {
-        id: crypto.randomUUID(),
-        title: pendingTitle || `Раздел ${tableNumber}`,
-        collapsed: false,
-        columns,
-        rows: [],
-      };
-      imported.sections.push(currentSection);
-      headers = { statusIndex, columnCount: rawHeaders.length };
-      pendingTitle = "";
-      continue;
-    }
-    if (line.startsWith("|") && headers && currentSection) {
-      const collected = collectWikiTableRow(lines, lineIndex, headers.columnCount);
-      lineIndex = collected.index;
-      const values = splitWikiRow(collected.row);
-      currentSection.rows.push({
-        id: crypto.randomUUID(),
-        status: normalizeStatus(headers.statusIndex >= 0 ? values[headers.statusIndex] : ""),
-        cells: Object.fromEntries(
-          currentSection.columns.map((column) => [
-            column.id,
-            wikiInlineToHtml(values[column.sourceIndex] || "", attachments),
-          ]),
-        ),
-      });
-      continue;
-    }
-    headers = null;
-    currentSection = null;
-    introLines.push(line);
-  }
-
-  imported.sections.forEach((section) => {
-    section.columns.forEach((column) => delete column.sourceIndex);
-  });
-  imported.sections = imported.sections.filter((section) => section.rows.length);
-  if (!imported.sections.length) throw new Error("В разметке не найдена таблица чек-листа");
-  imported.intro = introLines
-    .map((line) => (line ? `<p>${wikiInlineToHtml(line, attachments)}</p>` : ""))
-    .join("");
-  return imported;
-}
-
 function adfNodeText(node) {
   if (!node) return "";
   if (node.type === "text") return node.text || "";
@@ -2128,6 +2784,7 @@ function adfNodeToHtml(node, attachments = []) {
 function parseAdfDocument(documentBody, attachments = []) {
   const imported = {
     reportId: crypto.randomUUID(),
+    publicId: createPublicId(),
     schemaVersion: 3,
     issueUrl: "",
     environment: "STAGE",
@@ -2234,28 +2891,67 @@ function generateMarkup() {
   return blocks.join("\n\n");
 }
 
-function generateVisualPreview() {
-  collectDocumentFields();
+function byId(items = []) {
+  return new Map(items.filter((item) => item?.id).map((item) => [item.id, item]));
+}
+
+function generateVisualPreview(sourceDraft = draft, compareDraft = null) {
+  if (sourceDraft === draft) collectDocumentFields();
+  const previewDraft = normalizeDraft(sourceDraft);
+  const oppositeDraft = compareDraft ? normalizeDraft(compareDraft) : null;
+  const oppositeSections = byId(oppositeDraft?.sections || []);
   const wrapper = document.createElement("div");
-  const overallColor = STATUS_META[draft.overallStatus].jiraColor;
-  wrapper.innerHTML = `<h1>Отчёт о тестировании</h1><p><strong>Проверено на ${escapeHtml(draft.environment)}</strong><br><strong style="color:${overallColor}">ТЕСТ — ${escapeHtml(draft.overallStatus)}</strong></p>`;
-  if (htmlToText(draft.intro) || /<img|<pre/i.test(draft.intro)) {
+  const overallColor = STATUS_META[previewDraft.overallStatus]?.jiraColor || STATUS_META["НЕ ПРОВЕРЕНО"].jiraColor;
+  wrapper.innerHTML = `<h1>Отчёт о тестировании</h1><p><strong>Проверено на ${escapeHtml(previewDraft.environment)}</strong><br><strong style="color:${overallColor}">ТЕСТ — ${escapeHtml(previewDraft.overallStatus)}</strong></p>`;
+  if (htmlToText(previewDraft.intro) || /<img|<pre/i.test(previewDraft.intro)) {
     const intro = document.createElement("div");
-    intro.innerHTML = previewEditorHtml(draft.intro);
+    intro.className =
+      oppositeDraft && cellText(previewDraft.intro) !== cellText(oppositeDraft.intro)
+        ? "version-diff-changed"
+        : "";
+    intro.innerHTML = previewEditorHtml(previewDraft.intro);
     wrapper.append(intro);
   }
-  draft.sections.forEach((section) => {
+  previewDraft.sections.forEach((section) => {
+    const oppositeSection = oppositeSections.get(section.id);
+    const sectionOnlyHere = Boolean(oppositeDraft && !oppositeSection);
+    const oppositeColumns = byId(oppositeSection?.columns || []);
+    const oppositeRows = byId(oppositeSection?.rows || []);
     const rows = section.rows.filter(hasRowContent);
-    if (!rows.length) return;
+    if (!rows.length && !sectionOnlyHere) return;
     const heading = document.createElement("h2");
     heading.textContent = section.title || "Раздел";
+    if (sectionOnlyHere || (oppositeSection && (section.title || "") !== (oppositeSection.title || ""))) {
+      heading.className = "version-diff-changed";
+    }
     const table = document.createElement("table");
     const thead = document.createElement("thead");
-    thead.innerHTML = `<tr><th>Номер</th>${section.columns.map((column) => `<th>${escapeHtml(column.title)}</th>`).join("")}<th>Статус</th></tr>`;
+    thead.innerHTML = `<tr><th>Номер</th>${section.columns
+      .map((column) => {
+        const oppositeColumn = oppositeColumns.get(column.id);
+        const changed =
+          sectionOnlyHere || !oppositeColumn || (column.title || "") !== (oppositeColumn.title || "");
+        return `<th class="${changed ? "version-diff-cell" : ""}">${escapeHtml(column.title || "Без названия")}</th>`;
+      })
+      .join("")}<th>Статус</th></tr>`;
     const tbody = document.createElement("tbody");
     rows.forEach((row, index) => {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${index + 1}.</td>${section.columns.map((column) => `<td>${previewEditorHtml(row.cells[column.id] || "")}</td>`).join("")}<td><strong style="color:${STATUS_META[row.status].jiraColor}">${row.status}</strong></td>`;
+      const oppositeRow = oppositeRows.get(row.id);
+      const rowOnlyHere = Boolean(oppositeDraft && !oppositeRow);
+      if (sectionOnlyHere || rowOnlyHere) tr.classList.add("version-diff-row");
+      tr.innerHTML = `<td>${index + 1}.</td>${section.columns
+        .map((column) => {
+          const oppositeColumn = oppositeColumns.get(column.id);
+          const columnOnlyHere = Boolean(oppositeDraft && !oppositeColumn);
+          const changed =
+            sectionOnlyHere ||
+            rowOnlyHere ||
+            columnOnlyHere ||
+            (oppositeDraft && cellText(row.cells?.[column.id] || "") !== cellText(oppositeRow?.cells?.[column.id] || ""));
+          return `<td class="${changed ? "version-diff-cell" : ""}">${previewEditorHtml(row.cells[column.id] || "")}</td>`;
+        })
+        .join("")}<td class="${sectionOnlyHere || rowOnlyHere || (oppositeDraft && row.status !== oppositeRow?.status) ? "version-diff-cell" : ""}"><strong style="color:${STATUS_META[row.status]?.jiraColor || STATUS_META["НЕ ПРОВЕРЕНО"].jiraColor}">${row.status}</strong></td>`;
       tbody.append(tr);
     });
     table.append(thead, tbody);
@@ -2529,6 +3225,11 @@ function setStorageConnectionState(message, type = "") {
   elements.storageConnectionState.className = `connection-state ${type}`.trim();
 }
 
+function setReportIdentityState(message, type = "") {
+  elements.reportIdentityState.textContent = message;
+  elements.reportIdentityState.className = `connection-state ${type}`.trim();
+}
+
 function fillStorageSettingsForm() {
   elements.yandexStorageEnabled.checked = Boolean(storageSettings.yandex.enabled);
   elements.yandexStoragePath.value = storageSettings.yandex.path || "/QA Report";
@@ -2560,24 +3261,60 @@ function saveStorageSettings() {
   localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(storageSettings));
 }
 
+function fillReportIdentityForm() {
+  elements.reportClientId.value = reportClientId;
+  elements.reportWorkspaceKey.value = reportWorkspaceKey;
+  setReportIdentityState(
+    reportWorkspaceKey.trim()
+      ? "Серверная история будет использовать ключ пространства."
+      : "Серверная история будет использовать этот браузер.",
+  );
+}
+
+function saveReportIdentitySettings() {
+  reportWorkspaceKey = elements.reportWorkspaceKey.value.trim();
+  if (reportWorkspaceKey) {
+    localStorage.setItem(WORKSPACE_KEY_STORAGE_KEY, reportWorkspaceKey);
+  } else {
+    localStorage.removeItem(WORKSPACE_KEY_STORAGE_KEY);
+  }
+  setReportIdentityState(
+    reportWorkspaceKey
+      ? "Ключ пространства сохранён. История будет общей для этого ключа."
+      : "Ключ пространства очищен. История привязана к этому браузеру.",
+    "success",
+  );
+}
+
 function setSettingsSection(section) {
   const files = section === "files";
-  elements.settingsJiraSectionButton.classList.toggle("active", !files);
+  const history = section === "history";
+  const jira = !files && !history;
+  elements.settingsJiraSectionButton.classList.toggle("active", jira);
   elements.settingsFilesSectionButton.classList.toggle("active", files);
-  elements.settingsJiraSection.hidden = files;
+  elements.settingsHistorySectionButton.classList.toggle("active", history);
+  elements.settingsJiraSection.hidden = !jira;
   elements.settingsFilesSection.hidden = !files;
-  elements.settingsJiraSection.classList.toggle("active", !files);
+  elements.settingsHistorySection.hidden = !history;
+  elements.settingsJiraSection.classList.toggle("active", jira);
   elements.settingsFilesSection.classList.toggle("active", files);
-  elements.testJiraButton.hidden = files;
+  elements.settingsHistorySection.classList.toggle("active", history);
+  elements.testJiraButton.hidden = files || history;
 }
 
 function openJiraSettings() {
   fillJiraSettingsForm();
   fillStorageSettingsForm();
+  fillReportIdentityForm();
   setSettingsSection("jira");
   setJiraSettingsTab("manual");
   setConnectionState("Соединение ещё не проверялось.");
   setStorageConnectionState("Настройки файлового хранилища ещё не сохранялись.");
+  setReportIdentityState(
+    reportWorkspaceKey.trim()
+      ? "Серверная история будет использовать ключ пространства."
+      : "Серверная история будет использовать этот браузер.",
+  );
   elements.jiraSettingsModal.hidden = false;
   document.body.style.overflow = "hidden";
 }
@@ -2593,6 +3330,7 @@ function saveJiraSettings() {
   jiraSecret = elements.jiraToken.value;
   localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
   saveStorageSettings();
+  saveReportIdentitySettings();
   setConnectionState("Настройки сохранены. Секрет останется только до перезагрузки.", "success");
   setStorageConnectionState("Настройки файлов сохранены. Токены останутся только до перезагрузки.", "success");
 }
@@ -3260,38 +3998,95 @@ async function openHistory() {
   await renderHistoryList();
 }
 
+async function saveHistoryCommentNow(report, commentField) {
+  const key = `${report.source}:${report.id}`;
+  clearTimeout(historyCommentTimers.get(key));
+  historyCommentTimers.delete(key);
+  const value = commentField.value;
+  if (value === (report.historyComment || "")) return;
+  const action =
+    report.source === "server"
+      ? updateServerReportComment(report.id, value)
+      : updateLocalReportComment(report.id, value);
+  await action;
+  if (report.source === "server") {
+    await updateLocalReportComment(report.id, value).catch(() => {});
+  }
+  report.historyComment = value;
+  if (report.id === draft.reportId) setSaveStatus("Комментарий сохранён");
+}
+
+async function flushVisibleHistoryComments() {
+  const fields = [...elements.historyList.querySelectorAll(".history-comment-field")];
+  await Promise.allSettled(fields.map((field) => field.__saveHistoryComment?.()));
+}
+
 function closeHistory() {
+  flushVisibleHistoryComments().catch(() => setSaveStatus("Ошибка комментария"));
   elements.historyModal.hidden = true;
   document.body.style.overflow = "";
 }
 
 async function renderHistoryList() {
-  const reports = await getAllReports();
+  const reports = await getAllHistoryReports();
   const query = elements.historySearch.value.trim().toLowerCase();
   const filtered = reports.filter((report) =>
-    `${report.title} ${report.issueKey} ${report.issueUrl}`.toLowerCase().includes(query),
+    `${report.title} ${report.issueKey} ${report.issueUrl} ${report.historyComment || ""}`.toLowerCase().includes(query),
   );
-  elements.historyUsage.textContent = `${reports.length} из ${HISTORY_LIMIT}`;
+  const serverCount = reports.filter((report) => report.source === "server").length;
+  const localCount = reports.length - serverCount;
+  elements.historyUsage.textContent = `Всего: ${reports.length} · Облако: ${serverCount} · Локально: ${localCount}`;
   elements.historyList.innerHTML = "";
   if (!filtered.length) {
-    elements.historyList.innerHTML = '<div class="history-empty">Сохранённых отчётов пока нет</div>';
+    const title = reports.length ? "Ничего не найдено" : "Отчётов пока нет";
+    elements.historyList.innerHTML = `<div class="history-empty"><p>${title}</p><button class="button button-primary" type="button" data-create-empty-report>Создать</button></div>`;
+    elements.historyList.querySelector("[data-create-empty-report]")?.addEventListener("click", () => {
+      closeHistory();
+      resetDraft();
+    });
     return;
   }
   filtered.forEach((report) => {
     const item = document.createElement("article");
     item.className = "history-item";
+    item.classList.toggle("current", report.id === draft.reportId);
     const info = document.createElement("div");
-    info.innerHTML = `<h3>${escapeHtml(report.title)}</h3><p>${new Date(report.updatedAt).toLocaleString("ru-RU")} · ${escapeHtml(report.overallStatus)}</p>`;
+    info.className = "history-item-info";
+    const sourceIcon = report.source === "server" ? "☁" : "⌘";
+    const sourceTitle = report.source === "server" ? "Облачная версия" : "Локальная версия";
+    const publicId = reportPublicId(report);
+    info.innerHTML = `<h3>${escapeHtml(report.title)}</h3><p><span class="history-source-icon" title="${sourceTitle}" aria-label="${sourceTitle}">${sourceIcon}</span> <code>${escapeHtml(publicId)}</code> · ${new Date(report.updatedAt).toLocaleString("ru-RU")} · ${escapeHtml(report.overallStatus)}</p>`;
+    const commentField = document.createElement("textarea");
+    commentField.className = "history-comment-field";
+    commentField.rows = 2;
+    commentField.placeholder = "Комментарий к отчёту";
+    commentField.value = report.historyComment || "";
+    commentField.__saveHistoryComment = () => saveHistoryCommentNow(report, commentField);
+    commentField.addEventListener("input", () => {
+      const key = `${report.source}:${report.id}`;
+      clearTimeout(historyCommentTimers.get(key));
+      historyCommentTimers.set(
+        key,
+        setTimeout(() => {
+          saveHistoryCommentNow(report, commentField).catch(() => setSaveStatus("Ошибка комментария"));
+        }, 500),
+      );
+    });
+    commentField.addEventListener("blur", () => {
+      saveHistoryCommentNow(report, commentField).catch(() => setSaveStatus("Ошибка комментария"));
+    });
     const actions = document.createElement("div");
     actions.className = "history-item-actions";
     const openButton = createSmallButton("Открыть", async () => {
       await saveReportSnapshot("before-open-history");
+      const fullReport = report.source === "server" ? await getServerReport(report.id) : report;
       suppressHistory = true;
-      draft = normalizeDraft(clone(report.document));
+      draft = normalizeDraft(clone(fullReport.document));
       historyCurrent = serializeDraft();
       undoStack = [];
       redoStack = [];
       render();
+      updateChecklistUrl(draft.publicId);
       saveDraft();
       suppressHistory = false;
       closeHistory();
@@ -3299,13 +4094,16 @@ async function renderHistoryList() {
     });
     const copyButton = createSmallButton("Копия", async () => {
       await saveReportSnapshot("before-copy-history");
-      draft = normalizeDraft(clone(report.document));
+      const fullReport = report.source === "server" ? await getServerReport(report.id) : report;
+      draft = normalizeDraft(clone(fullReport.document));
       draft.draftId = crypto.randomUUID();
       draft.reportId = crypto.randomUUID();
+      draft.publicId = createPublicId();
       historyCurrent = serializeDraft();
       undoStack = [];
       redoStack = [];
       render();
+      updateChecklistUrl(draft.publicId);
       saveDraft();
       closeHistory();
       showToast("Создана копия отчёта");
@@ -3317,11 +4115,29 @@ async function renderHistoryList() {
         danger: true,
       });
       if (!confirmed) return;
-      await deleteReportRecord(report.id);
+      if (report.source === "server") {
+        await deleteServerReport(report.id);
+      } else {
+        await deleteReportRecord(report.id);
+      }
+      if (report.id === draft.reportId) {
+        draft = normalizeDraft({
+          ...clone(DEFAULT_DRAFT),
+          draftId: crypto.randomUUID(),
+          reportId: crypto.randomUUID(),
+          publicId: createPublicId(),
+        });
+        historyCurrent = serializeDraft();
+        undoStack = [];
+        redoStack = [];
+        render();
+        updateChecklistUrl(draft.publicId);
+        updateHistoryButtons();
+      }
       await renderHistoryList();
     }, true);
     actions.append(openButton, copyButton, deleteButton);
-    item.append(info, actions);
+    item.append(info, commentField, actions);
     elements.historyList.append(item);
   });
 }
@@ -4830,16 +5646,62 @@ async function applyImport(mode = "replace") {
         ...imported,
         draftId: crypto.randomUUID(),
         reportId: crypto.randomUUID(),
+        publicId: createPublicId(),
         issueUrl: imported.issueUrl || issueUrl,
       });
     }
     scheduleHistoryCommit();
     saveDraft();
     render();
+    updateChecklistUrl(draft.publicId);
     closeImport();
     showToast(`Импортировано таблиц: ${imported.sections.length}`);
   } catch {
     // Ошибка уже показана в окне импорта.
+  }
+}
+
+async function applyImportedChecklist(imported, metadata = {}) {
+  await saveReportSnapshot("before-inbound-import").catch(() => {});
+  const nextDraft = normalizeDraft({
+    ...imported,
+    draftId: crypto.randomUUID(),
+    reportId: metadata.checklistId || crypto.randomUUID(),
+    publicId: normalizePublicId(metadata.publicId) || createPublicId(),
+  });
+  const title = String(metadata.title || "").trim();
+  if (title && nextDraft.sections[0]) nextDraft.sections[0].title = title;
+  const issueUrl = String(metadata.issueKey || "").trim();
+  if (issueUrl) nextDraft.issueUrl = issueUrl;
+  draft = nextDraft;
+  historyCurrent = serializeDraft();
+  undoStack = [];
+  redoStack = [];
+  render();
+  updateChecklistUrl(draft.publicId);
+  updateHistoryButtons();
+  forceLocalDraftSave = true;
+  await saveDraft();
+  await saveReportSnapshot("inbound-import").catch(() => {});
+}
+
+async function handleInboundChecklistImport() {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get("importToken");
+  if (!token) return;
+  try {
+    setSaveStatus("Импортируем чек-лист…", { saving: true });
+    const response = await fetch(`/api/checklists/import/${encodeURIComponent(token)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    if (payload.format !== "jira") throw new Error("Ссылка содержит неподдерживаемый формат импорта");
+    const imported = parseJiraMarkup(payload.content);
+    await applyImportedChecklist(imported, payload);
+    window.history.replaceState({}, "", `/report/${draft.publicId}`);
+    showToast("Чек-лист импортирован из QA Assistant", 5000);
+  } catch (error) {
+    setSaveStatus("Ошибка импорта");
+    showToast(`Не удалось импортировать чек-лист: ${error.message}`, 9000);
   }
 }
 
@@ -5365,25 +6227,30 @@ async function resetDraft() {
   });
   if (!confirmed) return;
   saveReportSnapshot("before-new").catch(() => {});
+  hideDraftSyncBanner();
+  hideSyncRecovery();
   draft = normalizeDraft(clone(DEFAULT_DRAFT));
   draft.draftId = crypto.randomUUID();
   draft.reportId = crypto.randomUUID();
+  draft.publicId = createPublicId();
   draft.sections = [createSection("Основные проверки", DEFAULT_COLUMNS, 2)];
   historyCurrent = serializeDraft();
   undoStack = [];
   redoStack = [];
-  saveDraft();
   render();
   updateHistoryButtons();
+  forceLocalDraftSave = true;
+  saveDraft();
   showToast("Создан новый отчёт");
 }
 
 elements.addSectionButton.addEventListener("click", () => {
+  flushDraftFromDom();
   const previous = draft.sections[draft.sections.length - 1];
   const section = createSection(`Новый раздел ${draft.sections.length + 1}`, previous?.columns || DEFAULT_COLUMNS);
   draft.sections.push(section);
   renderSections();
-  scheduleSave();
+  saveLocalMutationNow();
 });
 
 ["input", "change"].forEach((eventName) => {
@@ -5974,15 +6841,33 @@ elements.saveHistorySnapshotButton.addEventListener("click", async () => {
   showToast("Снимок отчёта сохранён");
 });
 elements.clearHistoryButton.addEventListener("click", async () => {
-  const reports = await getAllReports();
+  const reports = await getAllHistoryReports();
   if (!reports.length) return;
-  const confirmed = await askConfirmation(`Удалить всю локальную историю (${reports.length} отчётов)?`, {
+  const confirmed = await askConfirmation(`Удалить всю историю для текущей привязки (${reports.length} отчётов)?`, {
     title: "Очистка истории",
     confirmText: "Очистить",
     danger: true,
   });
   if (!confirmed) return;
   await clearReportHistory();
+  await clearServerReports().catch(() => {});
+  serverReportHashes = {};
+  dismissedCloudHashes = {};
+  saveServerReportHashes();
+  saveDismissedCloudHashes();
+  draft = normalizeDraft({ ...clone(DEFAULT_DRAFT), draftId: crypto.randomUUID(), reportId: crypto.randomUUID(), publicId: createPublicId() });
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Если localStorage недоступен, достаточно очистки IndexedDB и серверной истории.
+  }
+  historyCurrent = serializeDraft();
+  undoStack = [];
+  redoStack = [];
+  hasUnsavedLocalChanges = false;
+  render();
+  updateChecklistUrl(draft.publicId);
+  updateHistoryButtons();
   await renderHistoryList();
 });
 elements.focusModeButton.addEventListener("click", () => {
@@ -5996,14 +6881,23 @@ elements.saveJiraSettingsButton.addEventListener("click", saveJiraSettings);
 elements.testJiraButton.addEventListener("click", testJiraConnection);
 elements.publishButton.addEventListener("click", publishToJira);
 elements.publishCancelButton.addEventListener("click", cancelPublishProgress);
-elements.draftSyncUpdateButton.addEventListener("click", () => {
-  if (pendingRemoteDraft) applyRemoteDraft(pendingRemoteDraft);
+elements.cloudConflictStatus.addEventListener("click", openVersionConflictModal);
+elements.closeVersionConflictFooterButton.addEventListener("click", closeVersionConflictModal);
+elements.selectLocalVersionButton.addEventListener("click", () => setVersionConflictChoice("local"));
+elements.selectCloudVersionButton.addEventListener("click", () => setVersionConflictChoice("cloud"));
+elements.saveBothVersionsButton.addEventListener("click", () => setVersionConflictChoice("both"));
+elements.saveVersionChoiceButton.addEventListener("click", () => {
+  saveVersionConflictChoice().catch((error) => {
+    showToast(`Не удалось сохранить выбор: ${error.message}`, 9000);
+  });
 });
-elements.draftSyncKeepButton.addEventListener("click", keepCurrentDraft);
+elements.openLocalCopyButton.addEventListener("click", () => openSavedConflictCopy("local"));
+elements.openCloudCopyButton.addEventListener("click", () => openSavedConflictCopy("cloud"));
 elements.jiraType.addEventListener("change", updateJiraSettingsLabels);
 elements.jiraAuthMethod.addEventListener("change", updateJiraSettingsLabels);
 elements.settingsJiraSectionButton.addEventListener("click", () => setSettingsSection("jira"));
 elements.settingsFilesSectionButton.addEventListener("click", () => setSettingsSection("files"));
+elements.settingsHistorySectionButton.addEventListener("click", () => setSettingsSection("history"));
 elements.jiraManualTab.addEventListener("click", () => setJiraSettingsTab("manual"));
 elements.jiraCurlTab.addEventListener("click", () => setJiraSettingsTab("curl"));
 elements.parseJiraCurlButton.addEventListener("click", applyJiraCurlSettings);
@@ -6097,6 +6991,9 @@ window.addEventListener("storage", (event) => {
   }
 });
 window.addEventListener("focus", checkStoredDraftFreshness);
+window.addEventListener("hashchange", () => {
+  openReportFromRoute().catch(() => {});
+});
 window.addEventListener("blur", flushPendingDraftSave);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
@@ -6182,9 +7079,14 @@ window.addEventListener("beforeunload", (event) => {
     event.preventDefault();
     event.returnValue = "";
   }
+  if (!elements.historyModal.hidden) flushVisibleHistoryComments().catch(() => {});
   flushPendingDraftSave();
 });
 
 render();
+if (!routeChecklistPublicId()) updateChecklistUrl(draft.publicId);
 updateHistoryButtons();
-checkStoredDraftFreshness();
+openReportFromRoute()
+  .catch(() => {})
+  .finally(() => checkStoredDraftFreshness());
+handleInboundChecklistImport();

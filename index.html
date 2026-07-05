@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
-    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css?v=48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css?v=53" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -33,6 +33,7 @@
       <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
       <symbol id="icon-circle-half" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18" /></symbol>
       <symbol id="icon-contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 1 0 18Z" style="fill: currentColor; stroke: none" /></symbol>
+      <symbol id="icon-cloud-alert" viewBox="0 0 24 24"><path d="M17.5 18H8a5 5 0 1 1 1.5-9.8A6 6 0 0 1 21 11a3.5 3.5 0 0 1-3.5 7Z" /><path d="M12 9v4M12 16h.01" /></symbol>
       <symbol id="icon-corporate" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="5" /><path d="M8 8h8v8H8z" /><path d="M10 4v4M14 16v4M4 10h4M16 14h4" /></symbol>
       <symbol id="icon-life-buoy" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /><path d="m5.6 5.6 4.3 4.3M14.1 14.1l4.3 4.3M18.4 5.6l-4.3 4.3M9.9 14.1l-4.3 4.3" /></symbol>
       <symbol id="icon-bug" viewBox="0 0 24 24"><path d="M8 6.5A4 4 0 0 1 16 6.5M9 3 7.5 1.5M15 3l1.5-1.5M8 9h8v6a4 4 0 0 1-8 0V9ZM4 10h4M16 10h4M4 15h4M16 15h4M6 20l2.5-2.5M18 20l-2.5-2.5M12 9v10" /></symbol>
@@ -167,6 +168,15 @@
           </button>
         </div>
       </header>
+
+      <button class="cloud-conflict-popover" id="cloudConflictStatus" type="button" title="Открыть сравнение локальной и облачной версии" hidden>
+        <svg class="ui-icon" aria-hidden="true"><use href="#icon-cloud-alert"></use></svg>
+        <span>
+          <strong>Есть изменения в облаке</strong>
+          <small>Локальная и облачная версии отличаются</small>
+        </span>
+        <b>Сравнить</b>
+      </button>
 
       <main class="workspace">
         <section class="report-card">
@@ -431,7 +441,7 @@
       <section class="modal history-modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
         <header class="modal-header">
           <div>
-            <div class="eyebrow">Локальное хранение</div>
+            <div class="eyebrow">Сервер и браузер</div>
             <h2 id="historyTitle">История отчётов</h2>
           </div>
           <button class="icon-button" id="closeHistoryButton" type="button" aria-label="Закрыть историю">×</button>
@@ -443,7 +453,7 @@
         </div>
         <div class="history-list" id="historyList"></div>
         <footer class="modal-footer">
-          <span>История хранится только в этом браузере.</span>
+          <span>Серверная история дополняется локальным кэшем браузера.</span>
           <button class="button button-secondary" id="saveHistorySnapshotButton" type="button">Сохранить снимок</button>
         </footer>
       </section>
@@ -587,6 +597,10 @@
               <svg class="ui-icon" aria-hidden="true"><use href="#icon-paperclip"></use></svg>
               <span>Файлы</span>
             </button>
+            <button class="settings-nav-item" id="settingsHistorySectionButton" type="button" data-settings-section="history">
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-history"></use></svg>
+              <span>История</span>
+            </button>
           </nav>
           <div class="settings-body">
             <section class="settings-section active" id="settingsJiraSection" data-settings-panel="jira">
@@ -685,6 +699,26 @@
               </div>
               <div class="connection-state" id="storageConnectionState">Настройки файлового хранилища ещё не сохранялись.</div>
             </section>
+            <section class="settings-section" id="settingsHistorySection" data-settings-panel="history" hidden>
+              <div class="settings-note">
+                Серверная история сохраняет отчёты в SQLite. В корпоративном контуре владелец
+                может определяться по SSO-заголовкам reverse proxy. Без SSO используется этот
+                браузер или ключ пространства.
+              </div>
+              <label class="field">
+                <span>ID этого браузера</span>
+                <input id="reportClientId" type="text" readonly />
+              </label>
+              <label class="field">
+                <span>Ключ пространства <small>необязательно</small></span>
+                <input id="reportWorkspaceKey" type="text" autocomplete="off" placeholder="Например, qa-team или project-advinta" />
+              </label>
+              <p class="settings-curl-hint">
+                Если указать одинаковый ключ на другом компьютере, QA Report покажет ту же
+                серверную историю. Кто знает ключ, тот получает доступ к этому пространству.
+              </p>
+              <div class="connection-state" id="reportIdentityState">Серверная история будет использовать этот браузер.</div>
+            </section>
           </div>
         </div>
         <footer class="modal-footer">
@@ -698,15 +732,68 @@
       </section>
     </div>
 
-    <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <div class="draft-sync-banner" id="draftSyncBanner" hidden>
-      <span>Есть более новая версия чек-листа</span>
-      <div class="draft-sync-actions">
-        <button class="button button-secondary" id="draftSyncKeepButton" type="button">Оставить текущую</button>
-        <button class="button button-primary" id="draftSyncUpdateButton" type="button">Обновить</button>
-      </div>
+    <div class="modal-backdrop" id="versionConflictModal" hidden>
+      <section class="modal version-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="versionConflictTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Конфликт версий</div>
+            <h2 id="versionConflictTitle">Локальная и облачная версии отличаются</h2>
+          </div>
+        </header>
+        <div class="version-conflict-body">
+          <div class="version-choice-bar">
+            <button class="button button-secondary" id="selectLocalVersionButton" type="button">Выбрать локальную версию</button>
+            <button class="button button-secondary" id="saveBothVersionsButton" type="button">Сохранить обе версии</button>
+            <button class="button button-secondary" id="selectCloudVersionButton" type="button">Выбрать облачную версию</button>
+          </div>
+          <div class="version-compare-grid">
+            <section class="version-compare-panel" id="localVersionPanel">
+              <header>
+                <div>
+                  <div class="version-summary-label">Локальная версия</div>
+                  <dl id="localVersionSummary"></dl>
+                </div>
+              </header>
+              <div class="version-preview" id="localVersionPreview"></div>
+            </section>
+            <section class="version-compare-panel" id="cloudVersionPanel">
+              <header>
+                <div>
+                  <div class="version-summary-label">Облачная версия</div>
+                  <dl id="cloudVersionSummary"></dl>
+                </div>
+              </header>
+              <div class="version-preview" id="cloudVersionPreview"></div>
+            </section>
+          </div>
+        </div>
+        <footer class="modal-footer">
+          <button class="button button-secondary" id="closeVersionConflictFooterButton" type="button">Закрыть</button>
+          <button class="button button-primary" id="saveVersionChoiceButton" type="button" disabled>Сохранить изменения</button>
+        </footer>
+      </section>
     </div>
 
+    <div class="modal-backdrop version-copy-choice-backdrop" id="versionCopyChoiceModal" hidden>
+      <section class="modal version-copy-choice-modal" role="dialog" aria-modal="true" aria-labelledby="versionCopyChoiceTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Две копии</div>
+            <h2 id="versionCopyChoiceTitle">Сохранены две копии чек-листа</h2>
+          </div>
+        </header>
+        <div class="version-copy-choice-body">
+          <p>Какую версию открыть сейчас?</p>
+          <div class="version-copy-choice-actions">
+            <button class="button button-primary" id="openLocalCopyButton" type="button">Открыть локальную версию</button>
+            <button class="button button-secondary" id="openCloudCopyButton" type="button">Открыть версию из облака</button>
+          </div>
+          <p class="settings-curl-hint">Невыбранная версия сохранится в истории как отдельный чек-лист.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <template id="sectionTemplate">
       <section class="check-section">
         <div class="section-sticky-block">
@@ -739,6 +826,7 @@
       </section>
     </template>
 
-    <script src="./app.js?v=52"></script>
+    <script src="/jira-markup-import.js?v=1"></script>
+    <script src="/app.js?v=59"></script>
   </body>
 </html>

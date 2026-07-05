@@ -1,6 +1,9 @@
 const http = require("node:http");
 const { spawn } = require("node:child_process");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 async function main() {
   const received = [];
@@ -92,9 +95,10 @@ async function main() {
   });
   await new Promise((resolve) => mock.listen(4199, "127.0.0.1", resolve));
 
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-report-test-"));
   const app = spawn(process.execPath, ["server.js"], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: "4174" },
+    env: { ...process.env, PORT: "4174", REPORTS_DB_PATH: path.join(testDir, "reports.sqlite") },
     stdio: "ignore",
   });
   await new Promise((resolve) => setTimeout(resolve, 250));
@@ -131,7 +135,7 @@ async function main() {
     const commentResult = await commentResponse.json();
     assert.equal(commentResult.verified, true);
     assert.equal(commentResult.commentId, "10001");
-    assert.equal(commentResult.apiRevision, 4);
+    assert.equal(commentResult.apiRevision, 5);
     const patTestRequest = received.find((item) => item.url === "/rest/api/2/myself");
     assert.equal(patTestRequest.authorization, "Bearer secret-pat");
     const cloudCommentRequest = received.find(
@@ -264,10 +268,221 @@ async function main() {
     });
     assert.equal(attachmentResponse.status, 200);
     assert.equal((await attachmentResponse.json()).attachments[0].attachmentId, "local-1");
+
+    const reportDocument = {
+      reportId: "server-report-1",
+      draftId: "server-draft-1",
+      schemaVersion: 3,
+      issueUrl: "https://company.atlassian.net/browse/QA-321",
+      environment: "STAGE",
+      overallStatus: "OK",
+      intro: "",
+      sections: [{ id: "s1", title: "Раздел", columns: [], rows: [] }],
+    };
+    const saveReportResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-QA-Report-Client-Id": "browser-a",
+      },
+      body: JSON.stringify({ document: reportDocument, reason: "test" }),
+    });
+    assert.equal(saveReportResponse.status, 200);
+    const saveReportResult = await saveReportResponse.json();
+    assert.equal(saveReportResult.report.ownerSource, "browser");
+    assert.equal(saveReportResult.report.issueKey, "QA-321");
+
+    const ownReportsResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      headers: { "X-QA-Report-Client-Id": "browser-a" },
+    });
+    assert.equal(ownReportsResponse.status, 200);
+    assert.equal((await ownReportsResponse.json()).reports.length, 1);
+
+    const otherReportsResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      headers: { "X-QA-Report-Client-Id": "browser-b" },
+    });
+    assert.equal(otherReportsResponse.status, 200);
+    assert.equal((await otherReportsResponse.json()).reports.length, 0);
+
+    const sharedReportResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-QA-Report-Client-Id": "browser-a",
+        "X-QA-Report-Workspace-Key": "qa-team",
+      },
+      body: JSON.stringify({
+        document: { ...reportDocument, reportId: "server-report-shared" },
+        title: "Shared report",
+      }),
+    });
+    assert.equal(sharedReportResponse.status, 200);
+    assert.equal((await sharedReportResponse.json()).report.ownerSource, "workspace-key");
+
+    const sharedReportsResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      headers: {
+        "X-QA-Report-Client-Id": "browser-c",
+        "X-QA-Report-Workspace-Key": "qa-team",
+      },
+    });
+    assert.equal(sharedReportsResponse.status, 200);
+    const sharedReports = await sharedReportsResponse.json();
+    assert.equal(sharedReports.reports.length, 1);
+    assert.equal(sharedReports.reports[0].title, "Shared report");
+
+    const fullReportResponse = await fetch("http://127.0.0.1:4174/api/reports/server-report-shared", {
+      headers: {
+        "X-QA-Report-Client-Id": "browser-c",
+        "X-QA-Report-Workspace-Key": "qa-team",
+      },
+    });
+    assert.equal(fullReportResponse.status, 200);
+    const fullReport = await fullReportResponse.json();
+    assert.equal(fullReport.report.document.reportId, "server-report-shared");
+    assert.ok(fullReport.report.contentHash);
+
+    const updatedSharedResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-QA-Report-Client-Id": "browser-c",
+        "X-QA-Report-Workspace-Key": "qa-team",
+      },
+      body: JSON.stringify({
+        document: {
+          ...reportDocument,
+          reportId: "server-report-shared",
+          environment: "PROD",
+        },
+        title: "Shared report updated",
+        baseContentHash: fullReport.report.contentHash,
+      }),
+    });
+    assert.equal(updatedSharedResponse.status, 200);
+    const updatedShared = await updatedSharedResponse.json();
+    assert.notEqual(updatedShared.report.contentHash, fullReport.report.contentHash);
+
+    const staleSharedResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-QA-Report-Client-Id": "browser-a",
+        "X-QA-Report-Workspace-Key": "qa-team",
+      },
+      body: JSON.stringify({
+        document: {
+          ...reportDocument,
+          reportId: "server-report-shared",
+          environment: "DEV",
+        },
+        title: "Stale overwrite",
+        baseContentHash: fullReport.report.contentHash,
+      }),
+    });
+    assert.equal(staleSharedResponse.status, 409);
+    const staleConflict = await staleSharedResponse.json();
+    assert.equal(staleConflict.conflict, true);
+    assert.equal(staleConflict.report.title, "Shared report updated");
+
+    const forcedSharedResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-QA-Report-Client-Id": "browser-a",
+        "X-QA-Report-Workspace-Key": "qa-team",
+      },
+      body: JSON.stringify({
+        document: {
+          ...reportDocument,
+          reportId: "server-report-shared",
+          environment: "DEV",
+        },
+        title: "Forced local version",
+        baseContentHash: fullReport.report.contentHash,
+        force: true,
+      }),
+    });
+    assert.equal(forcedSharedResponse.status, 200);
+    assert.equal((await forcedSharedResponse.json()).report.title, "Forced local version");
+
+    const checklistImportResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "qa-assistant",
+        format: "jira",
+        title: "Экспорт транзакций в Excel",
+        issueKey: "https://company.atlassian.net/browse/ADVINTAUT2-117",
+        content:
+          "||Номер||Проверка||Как проверить||Ожидаемый результат||Фактический результат||Статус||Комментарий||\n" +
+          "|1.|Отображение кнопки Export|Авторизоваться как Admin|Кнопка Export видна и доступна для нажатия||||",
+      }),
+    });
+    assert.equal(checklistImportResponse.status, 201);
+    const checklistImportResult = await checklistImportResponse.json();
+    assert.equal(checklistImportResult.ok, true);
+    assert.match(checklistImportResult.checklistId, /^[0-9a-f-]{36}$/);
+    assert.match(checklistImportResult.url, /^http:\/\/127\.0\.0\.1:4174\/report\/[a-f0-9]{8}\?/);
+    assert.match(checklistImportResult.url, /\?importToken=/);
+    assert.equal(checklistImportResult.parsed.rows, 1);
+
+    const proxiedChecklistImportResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": "qa-report.company.ru",
+      },
+      body: JSON.stringify({
+        source: "qa-assistant",
+        format: "jira",
+        title: "Proxy URL check",
+        content: "||Номер||Проверка||Статус||\n|1.|Проверить публичный URL||",
+      }),
+    });
+    assert.equal(proxiedChecklistImportResponse.status, 201);
+    const proxiedChecklistImportResult = await proxiedChecklistImportResponse.json();
+    assert.match(
+      proxiedChecklistImportResult.url,
+      /^https:\/\/qa-report\.company\.ru\/report\/[a-f0-9]{8}\?importToken=/,
+    );
+
+    const checklistPayloadResponse = await fetch(
+      `http://127.0.0.1:4174/api/checklists/import/${checklistImportResult.checklistId}`,
+    );
+    assert.equal(checklistPayloadResponse.status, 200);
+    const checklistPayload = await checklistPayloadResponse.json();
+    assert.equal(checklistPayload.format, "jira");
+    assert.equal(checklistPayload.title, "Экспорт транзакций в Excel");
+    assert.equal(checklistPayload.issueKey, "https://company.atlassian.net/browse/ADVINTAUT2-117");
+    assert.equal(checklistPayload.content.includes("Отображение кнопки Export"), true);
+
+    const unsupportedFormatResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format: "markdown", content: "| nope |" }),
+    });
+    assert.equal(unsupportedFormatResponse.status, 400);
+
+    const emptyContentResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format: "jira", content: "" }),
+    });
+    assert.equal(emptyContentResponse.status, 400);
+
+    const unparseableResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format: "jira", content: "Просто текст без таблицы" }),
+    });
+    assert.equal(unparseableResponse.status, 422);
+
     console.log("Jira integration test passed");
   } finally {
     app.kill("SIGTERM");
     await new Promise((resolve) => mock.close(resolve));
+    fs.rmSync(testDir, { recursive: true, force: true });
   }
 }
 

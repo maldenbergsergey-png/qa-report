@@ -12,6 +12,7 @@ services:
       HOST: 0.0.0.0
       PORT: 4173
       FEEDBACK_DIR: /app/feedback-data
+      REPORTS_DB_PATH: /app/reports-data/qa-report.sqlite
       RESEND_API_KEY_FILE: /run/secrets/resend_api_key
       FEEDBACK_TO_EMAIL: ${FEEDBACK_TO_EMAIL:-}
       FEEDBACK_FROM_EMAIL: ${FEEDBACK_FROM_EMAIL:-}
@@ -19,6 +20,7 @@ services:
       - resend_api_key
     volumes:
       - feedback_data:/app/feedback-data
+      - reports_data:/app/reports-data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
@@ -28,6 +30,7 @@ services:
 
 volumes:
   feedback_data:
+  reports_data:
 
 secrets:
   resend_api_key:
