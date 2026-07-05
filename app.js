@@ -2,6 +2,7 @@ const STORAGE_KEY = "qa-report-editor-draft-v2";
 const DRAFT_SYNC_CHANNEL = "qa-report-draft-sync-v1";
 const JIRA_SETTINGS_KEY = "qa-report-jira-settings-v1";
 const STORAGE_SETTINGS_KEY = "qa-report-storage-settings-v1";
+const CLOUD_HISTORY_ENABLED_KEY = "qa-report-cloud-history-enabled-v1";
 const CLIENT_ID_KEY = "qa-report-client-id-v1";
 const WORKSPACE_KEY_STORAGE_KEY = "qa-report-workspace-key-v1";
 const SERVER_HASHES_KEY = "qa-report-server-hashes-v1";
@@ -156,6 +157,7 @@ const elements = {
   jiraConnectionState: document.querySelector("#jiraConnectionState"),
   testJiraButton: document.querySelector("#testJiraButton"),
   saveJiraSettingsButton: document.querySelector("#saveJiraSettingsButton"),
+  settingsSaveCheck: document.querySelector("#settingsSaveCheck"),
   yandexStorageEnabled: document.querySelector("#yandexStorageEnabled"),
   yandexStorageToken: document.querySelector("#yandexStorageToken"),
   yandexStoragePath: document.querySelector("#yandexStoragePath"),
@@ -163,6 +165,7 @@ const elements = {
   googleStorageToken: document.querySelector("#googleStorageToken"),
   googleStorageFolder: document.querySelector("#googleStorageFolder"),
   storageConnectionState: document.querySelector("#storageConnectionState"),
+  cloudHistoryEnabled: document.querySelector("#cloudHistoryEnabled"),
   reportClientId: document.querySelector("#reportClientId"),
   reportWorkspaceKey: document.querySelector("#reportWorkspaceKey"),
   reportIdentityState: document.querySelector("#reportIdentityState"),
@@ -250,6 +253,7 @@ let jiraSecret = "";
 let jiraSettings = loadJiraSettings();
 let storageSecrets = { yandex: "", google: "" };
 let storageSettings = loadStorageSettings();
+let cloudHistoryEnabled = loadCloudHistoryEnabled();
 let reportClientId = loadReportClientId();
 let reportWorkspaceKey = loadReportWorkspaceKey();
 let serverReportHashes = loadServerReportHashes();
@@ -536,6 +540,14 @@ function loadStorageSettings() {
   }
 }
 
+function loadCloudHistoryEnabled() {
+  try {
+    return localStorage.getItem(CLOUD_HISTORY_ENABLED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 function loadReportClientId() {
   try {
     const saved = localStorage.getItem(CLIENT_ID_KEY);
@@ -717,6 +729,7 @@ async function saveReportSnapshot(reason = "manual") {
 }
 
 function queueServerReportSave(record) {
+  if (!cloudHistoryEnabled) return;
   saveReportToServer(record)
     .then((result) => {
       if (result.report?.contentHash) {
@@ -815,6 +828,7 @@ async function getAllReports() {
 }
 
 async function getServerReports() {
+  if (!cloudHistoryEnabled) return [];
   try {
     const result = await reportApi("/api/reports");
     return (result.reports || []).map((report) => ({ ...report, source: "server" }));
@@ -824,6 +838,7 @@ async function getServerReports() {
 }
 
 async function getServerReport(id, { rememberHash = true } = {}) {
+  if (!cloudHistoryEnabled) return null;
   const result = await reportApi(`/api/reports/${encodeURIComponent(id)}`);
   if (rememberHash && result.report?.contentHash) setKnownServerHash(result.report.id, result.report.contentHash);
   return result.report || null;
@@ -857,7 +872,7 @@ async function openReportFromRoute() {
   }
   try {
     const localReport = await findLocalReportByPublicId(publicId);
-    const fullReport = localReport || (await getServerReport(publicId));
+    const fullReport = localReport || (cloudHistoryEnabled ? await getServerReport(publicId) : null);
     if (!fullReport?.document) throw new Error("not-found");
     applyDraftLocally(fullReport.document, { status: "Сохранено" });
   } catch {
@@ -900,6 +915,7 @@ async function deleteReportRecord(id) {
 }
 
 async function deleteServerReport(id) {
+  if (!cloudHistoryEnabled) return;
   await reportApi(`/api/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
   forgetKnownServerHash(id);
 }
@@ -912,6 +928,7 @@ async function updateLocalReportComment(id, historyComment) {
 }
 
 async function updateServerReportComment(id, historyComment) {
+  if (!cloudHistoryEnabled) return;
   await reportApi(`/api/reports/${encodeURIComponent(id)}/comment`, {
     method: "PATCH",
     body: JSON.stringify({ historyComment }),
@@ -919,6 +936,7 @@ async function updateServerReportComment(id, historyComment) {
 }
 
 async function clearServerReports() {
+  if (!cloudHistoryEnabled) return;
   await reportApi("/api/reports", { method: "DELETE" });
   serverReportHashes = {};
   saveServerReportHashes();
@@ -943,16 +961,19 @@ async function saveDraft() {
           applyRemoteDraft(stored);
           return false;
         }
-        showSyncRecovery({
-          localDraft: draft,
-          serverDraft: stored,
-          serverHash: "",
-        });
-        setSaveStatus("Есть облачная версия");
+        if (cloudHistoryEnabled) {
+          showSyncRecovery({
+            localDraft: draft,
+            serverDraft: stored,
+            serverHash: "",
+          });
+          setSaveStatus("Есть облачная версия");
+          return false;
+        }
+      } else {
+        applyRemoteDraft(stored);
         return false;
       }
-      applyRemoteDraft(stored);
-      return false;
     }
   }
   if (!applyingRemoteDraft) {
@@ -989,13 +1010,15 @@ function flushPendingDraftSave() {
         applyRemoteDraft(stored);
         return false;
       }
-      showSyncRecovery({
-        localDraft: draft,
-        serverDraft: stored,
-        serverHash: "",
-      });
-      setSaveStatus("Есть облачная версия");
-      return false;
+      if (cloudHistoryEnabled) {
+        showSyncRecovery({
+          localDraft: draft,
+          serverDraft: stored,
+          serverHash: "",
+        });
+        setSaveStatus("Есть облачная версия");
+        return false;
+      }
     }
     draft = normalizeDraft(draft);
     draft.revision = (Number(draft.revision) || 0) + 1;
@@ -1460,6 +1483,10 @@ async function checkStoredDraftFreshness() {
 }
 
 async function checkServerDraftFreshness() {
+  if (!cloudHistoryEnabled) {
+    hideSyncRecovery();
+    return;
+  }
   if (!draft?.reportId) return;
   try {
     const knownHash = serverReportHashes[draft.reportId] || "";
@@ -3267,6 +3294,28 @@ function setReportIdentityState(message, type = "") {
   elements.reportIdentityState.className = `connection-state ${type}`.trim();
 }
 
+function updateCloudHistorySettingsState() {
+  const enabled = elements.cloudHistoryEnabled ? Boolean(elements.cloudHistoryEnabled.checked) : cloudHistoryEnabled;
+  if (elements.cloudHistoryEnabled) elements.cloudHistoryEnabled.checked = enabled;
+  if (elements.reportWorkspaceKey) elements.reportWorkspaceKey.disabled = !enabled;
+  const workspaceKey = elements.reportWorkspaceKey?.value?.trim() || reportWorkspaceKey.trim();
+  const message = !enabled
+    ? "Чек-листы сохраняются только локально в этом браузере."
+    : workspaceKey
+      ? "Облачная история будет использовать ключ пространства."
+      : "Облачная история будет привязана к этому браузеру.";
+  setReportIdentityState(message);
+}
+
+function setSettingsSavedState(saved) {
+  elements.saveJiraSettingsButton.classList.toggle("is-saved", saved);
+  elements.settingsSaveCheck.hidden = !saved;
+}
+
+function markSettingsDirty() {
+  setSettingsSavedState(false);
+}
+
 function fillStorageSettingsForm() {
   elements.yandexStorageEnabled.checked = Boolean(storageSettings.yandex.enabled);
   elements.yandexStoragePath.value = storageSettings.yandex.path || "/QA Report";
@@ -3299,28 +3348,33 @@ function saveStorageSettings() {
 }
 
 function fillReportIdentityForm() {
+  elements.cloudHistoryEnabled.checked = cloudHistoryEnabled;
   elements.reportClientId.value = reportClientId;
   elements.reportWorkspaceKey.value = reportWorkspaceKey;
-  setReportIdentityState(
-    reportWorkspaceKey.trim()
-      ? "Серверная история будет использовать ключ пространства."
-      : "Серверная история будет использовать этот браузер.",
-  );
+  updateCloudHistorySettingsState();
 }
 
 function saveReportIdentitySettings() {
+  const wasCloudEnabled = cloudHistoryEnabled;
+  cloudHistoryEnabled = Boolean(elements.cloudHistoryEnabled.checked);
+  localStorage.setItem(CLOUD_HISTORY_ENABLED_KEY, String(cloudHistoryEnabled));
   reportWorkspaceKey = elements.reportWorkspaceKey.value.trim();
   if (reportWorkspaceKey) {
     localStorage.setItem(WORKSPACE_KEY_STORAGE_KEY, reportWorkspaceKey);
   } else {
     localStorage.removeItem(WORKSPACE_KEY_STORAGE_KEY);
   }
-  setReportIdentityState(
-    reportWorkspaceKey
-      ? "Ключ пространства сохранён. История будет общей для этого ключа."
-      : "Ключ пространства очищен. История привязана к этому браузеру.",
-    "success",
-  );
+  if (!cloudHistoryEnabled) {
+    hideSyncRecovery();
+    serverReportHashes = {};
+    dismissedCloudHashes = {};
+    saveServerReportHashes();
+    saveDismissedCloudHashes();
+  } else if (!wasCloudEnabled) {
+    saveReportSnapshot("enable-cloud-history").catch(() => {});
+  }
+  updateCloudHistorySettingsState();
+  elements.reportIdentityState.classList.add("success");
 }
 
 function setSettingsSection(section) {
@@ -3336,7 +3390,6 @@ function setSettingsSection(section) {
   elements.settingsJiraSection.classList.toggle("active", jira);
   elements.settingsFilesSection.classList.toggle("active", files);
   elements.settingsHistorySection.classList.toggle("active", history);
-  elements.testJiraButton.hidden = files || history;
 }
 
 function openJiraSettings() {
@@ -3345,12 +3398,15 @@ function openJiraSettings() {
   fillReportIdentityForm();
   setSettingsSection("jira");
   setJiraSettingsTab("manual");
+  setSettingsSavedState(false);
   setConnectionState("Соединение ещё не проверялось.");
   setStorageConnectionState("Настройки файлового хранилища ещё не сохранялись.");
   setReportIdentityState(
-    reportWorkspaceKey.trim()
-      ? "Серверная история будет использовать ключ пространства."
-      : "Серверная история будет использовать этот браузер.",
+    !cloudHistoryEnabled
+      ? "Чек-листы сохраняются только локально в этом браузере."
+      : reportWorkspaceKey.trim()
+        ? "Облачная история будет использовать ключ пространства."
+        : "Облачная история будет привязана к этому браузеру.",
   );
   elements.jiraSettingsModal.hidden = false;
   document.body.style.overflow = "hidden";
@@ -3362,14 +3418,20 @@ function closeJiraSettings() {
 }
 
 function saveJiraSettings() {
-  const settings = readJiraSettingsForm();
-  jiraSettings = settings;
-  jiraSecret = elements.jiraToken.value;
-  localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
-  saveStorageSettings();
-  saveReportIdentitySettings();
-  setConnectionState("Настройки сохранены. Секрет останется только до перезагрузки.", "success");
-  setStorageConnectionState("Настройки файлов сохранены. Токены останутся только до перезагрузки.", "success");
+  try {
+    const settings = readJiraSettingsForm();
+    jiraSettings = settings;
+    jiraSecret = elements.jiraToken.value;
+    localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
+    saveStorageSettings();
+    saveReportIdentitySettings();
+    setConnectionState("Настройки сохранены. Секрет останется только до перезагрузки.", "success");
+    setStorageConnectionState("Настройки файлов сохранены. Токены останутся только до перезагрузки.", "success");
+    setSettingsSavedState(true);
+  } catch (error) {
+    setSettingsSavedState(false);
+    showToast(`Не удалось сохранить настройки: ${error.message}`, 9000);
+  }
 }
 
 function setJiraSettingsTab(tab) {
@@ -6935,6 +6997,10 @@ elements.jiraAuthMethod.addEventListener("change", updateJiraSettingsLabels);
 elements.settingsJiraSectionButton.addEventListener("click", () => setSettingsSection("jira"));
 elements.settingsFilesSectionButton.addEventListener("click", () => setSettingsSection("files"));
 elements.settingsHistorySectionButton.addEventListener("click", () => setSettingsSection("history"));
+elements.jiraSettingsModal.addEventListener("input", markSettingsDirty);
+elements.jiraSettingsModal.addEventListener("change", markSettingsDirty);
+elements.cloudHistoryEnabled.addEventListener("change", () => updateCloudHistorySettingsState());
+elements.reportWorkspaceKey.addEventListener("input", () => updateCloudHistorySettingsState());
 elements.jiraManualTab.addEventListener("click", () => setJiraSettingsTab("manual"));
 elements.jiraCurlTab.addEventListener("click", () => setJiraSettingsTab("curl"));
 elements.parseJiraCurlButton.addEventListener("click", applyJiraCurlSettings);

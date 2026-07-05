@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=53" />
+    <link rel="stylesheet" href="/styles.css?v=54" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -605,8 +605,7 @@
           <div class="settings-body">
             <section class="settings-section active" id="settingsJiraSection" data-settings-panel="jira">
               <div class="settings-note">
-                Токен или пароль хранится только в памяти открытой вкладки и исчезнет после перезагрузки.
-                Остальные настройки сохраняются локально в браузере.
+                Токен, пароль или cookie хранятся только в памяти открытой вкладки и исчезают после перезагрузки. Остальные настройки сохраняются локально в браузере.
               </div>
               <div class="settings-tabs" role="tablist" aria-label="Способ настройки Jira">
                 <button class="settings-tab active" id="jiraManualTab" data-jira-settings-tab="manual" type="button" role="tab" aria-selected="true" aria-controls="jiraManualPane">Вручную</button>
@@ -654,12 +653,16 @@
                   Разобрать и сохранить
                 </button>
               </div>
-              <div class="connection-state" id="jiraConnectionState">Соединение ещё не проверялось.</div>
+              <div class="settings-section-actions">
+                <button class="button button-secondary" id="testJiraButton" type="button">
+                  Проверить подключение
+                </button>
+                <div class="connection-state" id="jiraConnectionState">Соединение ещё не проверялось.</div>
+              </div>
             </section>
             <section class="settings-section" id="settingsFilesSection" data-settings-panel="files" hidden>
               <div class="settings-note">
-                Облачные токены используются только сервером приложения для загрузки выбранного изображения.
-                В браузере сохраняются только признаки активности и папка; сам токен действует до перезагрузки вкладки.
+                Токены дисков используются только сервером приложения для загрузки файлов. В браузере сохраняются только признаки активности и путь/ID папки.
               </div>
               <div class="storage-grid">
                 <section class="storage-card">
@@ -701,31 +704,33 @@
             </section>
             <section class="settings-section" id="settingsHistorySection" data-settings-panel="history" hidden>
               <div class="settings-note">
-                Серверная история сохраняет отчёты в SQLite. В корпоративном контуре владелец
-                может определяться по SSO-заголовкам reverse proxy. Без SSO используется этот
-                браузер или ключ пространства.
+                Облачное хранилище позволяет открывать чек-листы в разных браузерах при одинаковом ключе пространства. Если опция выключена, данные остаются только в этом браузере.
               </div>
+              <label class="settings-toggle-card">
+                <input id="cloudHistoryEnabled" type="checkbox" />
+                <span>
+                  <strong>Сохранять чек-листы в облачном хранилище</strong>
+                  <small>Если включено, чек-листы будут синхронизироваться через серверное хранилище. Если выключено, используется только локальное хранилище браузера.</small>
+                </span>
+              </label>
               <label class="field">
                 <span>ID этого браузера</span>
                 <input id="reportClientId" type="text" readonly />
               </label>
               <label class="field">
-                <span>Ключ пространства <small>необязательно</small></span>
+                <span>Ключ пространства</span>
                 <input id="reportWorkspaceKey" type="text" autocomplete="off" placeholder="Например, qa-team или project-advinta" />
               </label>
               <p class="settings-curl-hint">
-                Если указать одинаковый ключ на другом компьютере, QA Report покажет ту же
-                серверную историю. Кто знает ключ, тот получает доступ к этому пространству.
+                Одинаковый ключ пространства позволяет использовать одну облачную историю в разных браузерах. Если поле пустое, используется этот браузер.
               </p>
-              <div class="connection-state" id="reportIdentityState">Серверная история будет использовать этот браузер.</div>
+              <div class="connection-state" id="reportIdentityState">Чек-листы сохраняются только локально в этом браузере.</div>
             </section>
           </div>
         </div>
-        <footer class="modal-footer">
-          <button class="button button-secondary" id="testJiraButton" type="button">
-            Проверить подключение
-          </button>
+        <footer class="modal-footer settings-footer">
           <button class="button button-primary" id="saveJiraSettingsButton" type="button">
+            <span class="settings-save-check" id="settingsSaveCheck" aria-hidden="true" hidden>✓</span>
             Сохранить настройки
           </button>
         </footer>
@@ -827,6 +832,6 @@
     </template>
 
     <script src="/jira-markup-import.js?v=1"></script>
-    <script src="/app.js?v=59"></script>
+    <script src="/app.js?v=60"></script>
   </body>
 </html>

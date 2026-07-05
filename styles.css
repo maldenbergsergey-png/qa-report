@@ -2441,6 +2441,40 @@ body.section-sticky-active .editor-toolbar::after {
   background: #ffeceb;
 }
 
+.settings-section-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.settings-footer {
+  justify-content: flex-start;
+}
+
+.settings-save-check {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  color: #164b35;
+  background: #dcfff1;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.settings-save-check[hidden] {
+  display: none;
+}
+
+.button-primary.is-saved {
+  background: #1f845a;
+}
+
+.button-primary.is-saved:hover {
+  background: #216e4e;
+}
+
 .storage-grid {
   display: grid;
   gap: 14px;
@@ -2460,6 +2494,42 @@ body.section-sticky-active .editor-toolbar::after {
   align-items: center;
   gap: 9px;
   font-weight: 800;
+}
+
+.settings-toggle-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.settings-toggle-card input {
+  margin-top: 3px;
+}
+
+.settings-toggle-card span {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-toggle-card strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.settings-toggle-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.field input:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 
 .connection-state {
@@ -3799,9 +3869,9 @@ body.resizing-code * {
 }
 
 :root[data-theme="graphite"] .settings-note {
-  border-color: rgba(239, 68, 68, 0.34);
-  color: #ff8f8f;
-  background: #2a1f22;
+  border-color: #345b8f;
+  color: #9fc7ff;
+  background: #17253a;
 }
 
 :root[data-theme="dark"] .connection-state {
