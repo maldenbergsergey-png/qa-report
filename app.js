@@ -1622,6 +1622,11 @@ function collectSectionsFromDom() {
     const title = sectionElement.querySelector(".section-title");
     if (title) section.title = title.value;
     section.collapsed = sectionElement.classList.contains("collapsed");
+    sectionElement.querySelectorAll("th[data-column-id]").forEach((columnElement) => {
+      const column = section.columns.find((item) => item.id === columnElement.dataset.columnId);
+      const columnTitle = columnElement.querySelector("input");
+      if (column && columnTitle) column.title = columnTitle.value;
+    });
     sectionElement.querySelectorAll("tr[data-row-id]").forEach((rowElement) => {
       const row = section.rows.find((item) => item.id === rowElement.dataset.rowId);
       if (!row) return;
