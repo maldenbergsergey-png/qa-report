@@ -12,7 +12,7 @@ const DB_VERSION = 1;
 const REPORT_STORE = "reports";
 const HISTORY_LIMIT = 50;
 const REQUIRED_API_REVISION = 5;
-const FILE_ATTACHMENT_MAX_SIZE = 15 * 1024 * 1024;
+const FILE_ATTACHMENT_MAX_SIZE = 50 * 1024 * 1024;
 const ATTACHMENT_UPLOAD_BATCH_SIZE = 1;
 const { parseJiraMarkup, normalizeStatus } = window.QaReportJiraImport;
 
@@ -5052,8 +5052,8 @@ async function insertImages(files) {
   if (!activeEditor?.matches(".cell-editor, .intro-editor")) return;
   for (const file of [...files]) {
     if (!isImageLikeFile(file)) continue;
-    if (file.size > 10 * 1024 * 1024) {
-      showToast(`Файл ${file.name} больше 10 МБ`);
+    if (file.size > FILE_ATTACHMENT_MAX_SIZE) {
+      showToast(`Файл ${file.name} больше ${formatFileSize(FILE_ATTACHMENT_MAX_SIZE)}`);
       continue;
     }
     const dataUrl = await readFileAsDataUrl(file);

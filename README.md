@@ -492,6 +492,8 @@ Backend также отдаёт статические файлы приложе
 | `APP_PUBLIC_URL` / `PUBLIC_URL` | Альтернативные имена переменной публичного origin |
 | `REPORTS_DB_PATH` | Путь к SQLite-файлу истории |
 | `QA_REPORT_STORE_ATTACHMENTS` | Если `true`, сервер снова будет хранить embedded изображения и file-card в SQLite; по умолчанию выключено |
+| `QA_REPORT_MAX_BODY_MB` | Максимальный размер JSON-запроса к backend, по умолчанию `150` |
+| `QA_REPORT_MAX_ATTACHMENT_MB` | Максимальный размер одного вложения Jira, по умолчанию `50` |
 | `FEEDBACK_DIR` | Каталог для обращений обратной связи |
 | `FEEDBACK_TO_EMAIL` | Получатель email-уведомлений feedback |
 | `FEEDBACK_FROM_EMAIL` | Отправитель email-уведомлений feedback |
@@ -500,6 +502,10 @@ Backend также отдаёт статические файлы приложе
 Для публичного сервера рекомендуется задать `QA_REPORT_PUBLIC_URL`, даже если
 reverse proxy передаёт `Forwarded` или `X-Forwarded-*`. Это убирает риск, что API
 импорта вернёт внутренний `localhost` или адрес контейнера.
+
+Если приложение стоит за Nginx/Caddy/Traefik, лимит тела запроса на reverse proxy
+должен быть не ниже `QA_REPORT_MAX_BODY_MB`. Для Nginx обычно нужен
+`client_max_body_size 150m;` или больше для endpoint `/api/jira/attachments`.
 
 ## Docker
 

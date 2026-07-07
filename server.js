@@ -34,8 +34,13 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
 const PUBLIC_ORIGIN =
   process.env.QA_REPORT_PUBLIC_URL || process.env.APP_PUBLIC_URL || process.env.PUBLIC_URL || "";
-const MAX_BODY = 30 * 1024 * 1024;
-const MAX_ATTACHMENT_FILE = 15 * 1024 * 1024;
+function readSizeMb(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) * 1024 * 1024 : fallback * 1024 * 1024;
+}
+
+const MAX_BODY = readSizeMb("QA_REPORT_MAX_BODY_MB", 150);
+const MAX_ATTACHMENT_FILE = readSizeMb("QA_REPORT_MAX_ATTACHMENT_MB", 50);
 const STORE_REPORT_ATTACHMENTS = process.env.QA_REPORT_STORE_ATTACHMENTS === "true";
 const APP_VERSION = "0.2.2";
 const API_REVISION = 5;
@@ -603,6 +608,10 @@ function detectImageMime(bytes) {
   return "";
 }
 
+function formatLimitMb(bytes) {
+  return `${Math.round(bytes / 1024 / 1024)} МБ`;
+}
+
 function decodeImageFile(file, index) {
   const base64 = String(file.dataBase64 || "")
     .replace(/^data:[^;]+;base64,/i, "")
@@ -612,8 +621,8 @@ function decodeImageFile(file, index) {
   }
   const bytes = Buffer.from(base64, "base64");
   if (!bytes.length) throw new Error(`Файл «${file.name || index + 1}» пустой`);
-  if (bytes.length > 10 * 1024 * 1024) {
-    throw new Error(`Файл «${file.name || index + 1}» больше 10 МБ`);
+  if (bytes.length > MAX_ATTACHMENT_FILE) {
+    throw new Error(`Файл «${file.name || index + 1}» больше ${formatLimitMb(MAX_ATTACHMENT_FILE)}`);
   }
   const detectedType = detectImageMime(bytes);
   if (!detectedType) {
@@ -639,7 +648,7 @@ function decodeAttachmentFile(file, index) {
   const bytes = Buffer.from(base64, "base64");
   if (!bytes.length) throw new Error(`Файл «${file.name || index + 1}» пустой`);
   if (bytes.length > MAX_ATTACHMENT_FILE) {
-    throw new Error(`Файл «${file.name || index + 1}» больше 15 МБ`);
+    throw new Error(`Файл «${file.name || index + 1}» больше ${formatLimitMb(MAX_ATTACHMENT_FILE)}`);
   }
   return {
     attachmentId: file.attachmentId,
