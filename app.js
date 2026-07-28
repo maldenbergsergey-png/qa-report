@@ -98,6 +98,13 @@ const elements = {
   publishErrorText: document.querySelector("#publishErrorText"),
   publishProgressHint: document.querySelector("#publishProgressHint"),
   publishCancelButton: document.querySelector("#publishCancelButton"),
+  publishScopeModal: document.querySelector("#publishScopeModal"),
+  publishScopeSelectAll: document.querySelector("#publishScopeSelectAll"),
+  publishScopeList: document.querySelector("#publishScopeList"),
+  publishScopeSummary: document.querySelector("#publishScopeSummary"),
+  closePublishScopeButton: document.querySelector("#closePublishScopeButton"),
+  cancelPublishScopeButton: document.querySelector("#cancelPublishScopeButton"),
+  acceptPublishScopeButton: document.querySelector("#acceptPublishScopeButton"),
   closePreviewButton: document.querySelector("#closePreviewButton"),
   visualPreview: document.querySelector("#visualPreview"),
   markupPreview: document.querySelector("#markupPreview"),
@@ -278,6 +285,7 @@ let linkEditorRange = null;
 let editingLink = null;
 let publishAbortController = null;
 let publishInProgress = false;
+let publishScopeResolver = null;
 let confirmResolver = null;
 let feedbackFiles = [];
 let hasUnsavedLocalChanges = false;
@@ -2930,7 +2938,14 @@ function parseAdfDocument(documentBody, attachments = []) {
   return imported;
 }
 
-function generateMarkup() {
+function sectionsForPublication(sectionIds = null, sourceDraft = draft) {
+  if (sectionIds === null || sectionIds === undefined) return sourceDraft.sections;
+  const selectedIds = sectionIds instanceof Set ? sectionIds : new Set(sectionIds);
+  return sourceDraft.sections.filter((section) => selectedIds.has(section.id));
+}
+
+function generateMarkup(options = {}) {
+  const { sectionIds = null } = options;
   collectDocumentFields();
   const blocks = [];
   const heading = [];
@@ -2943,7 +2958,7 @@ function generateMarkup() {
   const intro = htmlToWiki(draft.intro);
   if (intro) blocks.push(intro);
 
-  draft.sections.forEach((section) => {
+  sectionsForPublication(sectionIds).forEach((section) => {
     const rows = section.rows.filter(hasRowContent);
     if (!rows.length) return;
     const lines = [`h2. ${section.title || "Раздел"}`];
@@ -3162,7 +3177,8 @@ function htmlToAdfBlocks(html) {
   return blocks.length ? blocks : [adfParagraph(" ")];
 }
 
-function generateAdfDocument() {
+function generateAdfDocument(options = {}) {
+  const { sectionIds = null } = options;
   collectDocumentFields();
   const content = [];
   const overallColor = STATUS_META[draft.overallStatus].jiraColor;
@@ -3177,7 +3193,7 @@ function generateAdfDocument() {
     content.push(...htmlToAdfBlocks(draft.intro));
   }
 
-  draft.sections.forEach((section) => {
+  sectionsForPublication(sectionIds).forEach((section) => {
     const rows = section.rows.filter(hasRowContent);
     if (!rows.length) return;
     content.push({
@@ -3838,8 +3854,11 @@ function cancelPublishProgress() {
 }
 
 async function uploadPendingImages(settings, issue, options = {}) {
-  const { signal, onProgress = () => {} } = options;
-  const files = [...collectLocalImages(), ...collectLocalFiles()];
+  const { signal, onProgress = () => {}, sectionIds = null } = options;
+  const files = [
+    ...collectLocalImages({ sectionIds }),
+    ...collectLocalFiles({ sectionIds }),
+  ];
   if (!files.length) return [];
   const uploaded = [];
   let index = 0;
@@ -3988,20 +4007,89 @@ async function publishCommentWithFallback(settings, issue, comment, signal) {
   }
 }
 
+function updatePublishScopeState() {
+  const checkboxes = [...elements.publishScopeList.querySelectorAll("input[type='checkbox']")];
+  const selectedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
+  const allSelected = selectedCount === checkboxes.length;
+  elements.publishScopeSelectAll.checked = allSelected;
+  elements.publishScopeSelectAll.indeterminate = selectedCount > 0 && !allSelected;
+  elements.publishScopeSummary.textContent = `Выбрано: ${selectedCount} из ${checkboxes.length}`;
+  elements.acceptPublishScopeButton.disabled = selectedCount === 0;
+}
+
+function askPublishScope() {
+  if (publishScopeResolver) publishScopeResolver(null);
+  elements.publishScopeList.replaceChildren();
+  draft.sections.forEach((section, index) => {
+    const label = document.createElement("label");
+    label.className = "publish-scope-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.value = section.id;
+    checkbox.dataset.sectionId = section.id;
+    checkbox.addEventListener("change", updatePublishScopeState);
+    const title = document.createElement("span");
+    title.textContent = section.title.trim() || `Раздел ${index + 1}`;
+    label.append(checkbox, title);
+    elements.publishScopeList.append(label);
+  });
+  elements.publishScopeSelectAll.checked = true;
+  elements.publishScopeSelectAll.indeterminate = false;
+  updatePublishScopeState();
+  elements.publishScopeModal.hidden = false;
+  document.body.style.overflow = "hidden";
+  elements.publishScopeSelectAll.focus();
+  return new Promise((resolve) => {
+    publishScopeResolver = resolve;
+  });
+}
+
+function resolvePublishScope(accepted) {
+  if (!publishScopeResolver) return;
+  const resolve = publishScopeResolver;
+  publishScopeResolver = null;
+  const sectionIds = accepted
+    ? new Set(
+        [...elements.publishScopeList.querySelectorAll("input[type='checkbox']:checked")]
+          .map((checkbox) => checkbox.dataset.sectionId),
+      )
+    : null;
+  elements.publishScopeModal.hidden = true;
+  document.body.style.overflow =
+    elements.codeEditorModal.hidden &&
+    elements.previewModal.hidden &&
+    elements.importModal.hidden &&
+    elements.jiraSettingsModal.hidden &&
+    elements.historyModal.hidden &&
+    elements.confirmModal.hidden
+      ? ""
+      : "hidden";
+  resolve(sectionIds);
+}
+
 async function publishToJira() {
   const publishButtonHtml = elements.publishButton.innerHTML;
   if (publishInProgress) return;
   try {
+    closeHeaderDropdowns();
     collectDocumentFields();
+    let sectionIds = null;
+    if (draft.sections.length > 1) {
+      sectionIds = await askPublishScope();
+      if (!sectionIds) return;
+    }
     const issue = parseIssueUrl(draft.issueUrl);
     const settings = { ...jiraSettings };
     validateJiraSettings(settings, jiraSecret);
     await checkBackendCompatibility();
-    const confirmed = await askConfirmation(
-      `Опубликовать отчёт комментарием в задаче ${issue.issueKey}?`,
-      { title: "Отправка в Jira", confirmText: "Отправить" },
-    );
-    if (!confirmed) return;
+    if (draft.sections.length <= 1) {
+      const confirmed = await askConfirmation(
+        `Опубликовать отчёт комментарием в задаче ${issue.issueKey}?`,
+        { title: "Отправка в Jira", confirmText: "Отправить" },
+      );
+      if (!confirmed) return;
+    }
     publishAbortController = new AbortController();
     publishInProgress = true;
     openPublishProgress();
@@ -4011,6 +4099,7 @@ async function publishToJira() {
       '<span class="primary-action-icon">…</span><span class="primary-action-label">Отправляем…</span>';
     await uploadPendingImages(settings, issue, {
       signal: publishAbortController.signal,
+      sectionIds,
       onProgress: ({ done, total }) => {
         const percent = total ? 15 + Math.round((done / total) * 45) : 55;
         setPublishProgress({
@@ -4022,8 +4111,8 @@ async function publishToJira() {
     });
     const comment =
       settings.type === "cloud"
-        ? { format: "adf", body: generateAdfDocument() }
-        : { format: "wiki", body: generateMarkup() };
+        ? { format: "adf", body: generateAdfDocument({ sectionIds }) }
+        : { format: "wiki", body: generateMarkup({ sectionIds }) };
     setPublishProgress({ step: "comment", percent: 68, status: "Публикация комментария" });
     const results = await publishCommentWithFallback(settings, issue, comment, publishAbortController.signal);
     setPublishProgress({ step: "verify", percent: 96, status: "Проверка созданного комментария" });
@@ -5525,7 +5614,8 @@ function startImageResize(event, figure) {
   document.addEventListener("pointercancel", onEnd);
 }
 
-function collectLocalImages() {
+function collectLocalImages(options = {}) {
+  const { sectionIds = null } = options;
   const images = [];
   const container = document.createElement("div");
   const usedNumbers = [];
@@ -5571,7 +5661,7 @@ function collectLocalImages() {
     });
   };
   collectFromHtml(draft.intro, { location: "intro" });
-  for (const section of draft.sections) {
+  for (const section of sectionsForPublication(sectionIds)) {
     for (const row of section.rows) {
       for (const [columnId, html] of Object.entries(row.cells)) {
         collectFromHtml(html, {
@@ -5586,7 +5676,8 @@ function collectLocalImages() {
   return images;
 }
 
-function collectLocalFiles() {
+function collectLocalFiles(options = {}) {
+  const { sectionIds = null } = options;
   const files = [];
   const collectFromHtml = (html, location) => {
     const container = document.createElement("div");
@@ -5607,7 +5698,7 @@ function collectLocalFiles() {
     });
   };
   collectFromHtml(draft.intro, { location: "intro" });
-  for (const section of draft.sections) {
+  for (const section of sectionsForPublication(sectionIds)) {
     for (const row of section.rows) {
       for (const [columnId, html] of Object.entries(row.cells)) {
         collectFromHtml(html, {
@@ -6985,6 +7076,15 @@ elements.saveJiraSettingsButton.addEventListener("click", saveJiraSettings);
 elements.testJiraButton.addEventListener("click", testJiraConnection);
 elements.publishButton.addEventListener("click", publishToJira);
 elements.publishCancelButton.addEventListener("click", cancelPublishProgress);
+elements.publishScopeSelectAll.addEventListener("change", () => {
+  elements.publishScopeList.querySelectorAll("input[type='checkbox']").forEach((checkbox) => {
+    checkbox.checked = elements.publishScopeSelectAll.checked;
+  });
+  updatePublishScopeState();
+});
+elements.closePublishScopeButton.addEventListener("click", () => resolvePublishScope(false));
+elements.cancelPublishScopeButton.addEventListener("click", () => resolvePublishScope(false));
+elements.acceptPublishScopeButton.addEventListener("click", () => resolvePublishScope(true));
 elements.cloudConflictStatus.addEventListener("click", openVersionConflictModal);
 elements.closeVersionConflictFooterButton.addEventListener("click", closeVersionConflictModal);
 elements.selectLocalVersionButton.addEventListener("click", () => setVersionConflictChoice("local"));
@@ -7141,6 +7241,10 @@ document.addEventListener("keydown", (event) => {
     }
   }
   if (event.key === "Escape") {
+    if (!elements.publishScopeModal.hidden) {
+      resolvePublishScope(false);
+      return;
+    }
     if (!elements.confirmModal.hidden) {
       resolveConfirmation(false);
       return;
