@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "jira": {
+      "type": "local",
+      "command": ["node", "/Users/sergeymaldenberg/projects/jira-mcp/mcp-stdio.js"],
+      "enabled": true,
+      "environment": {
+        "JIRA_URL": "https://jira.mr-group.ru",
+        "JIRA_EMAIL": "molodtsov.s@mr-group.ru",
+        "JIRA_TOKEN": "",
+        "JIRA_AUTH_MODE": "bearer",
+        "JIRA_API_VERSION": "2",
+        "JIRA_INSECURE_TLS": "1"
+      }
+    }
+  }
+}

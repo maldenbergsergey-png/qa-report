@@ -390,6 +390,25 @@ function normalizeSections(sections) {
   });
 }
 
+function normalizeJiraImagePlaceholderHtml(value) {
+  const template = document.createElement("template");
+  template.innerHTML = String(value || "");
+  template.content.querySelectorAll("span").forEach((placeholder) => {
+    let name = placeholder.matches(".jira-image-placeholder[data-jira-name]")
+      ? placeholder.dataset.jiraName
+      : "";
+    if (!name) {
+      const legacy = placeholder.textContent?.trim().match(/^\[Изображение:\s*(.+)\]$/);
+      name = legacy?.[1]?.trim() || "";
+    }
+    if (!name) return;
+    placeholder.classList.add("jira-image-placeholder");
+    placeholder.dataset.jiraName = name;
+    placeholder.textContent = name;
+  });
+  return template.innerHTML;
+}
+
 function normalizeDraft(value) {
   const base = clone(DEFAULT_DRAFT);
   const parsed = value && typeof value === "object" ? value : {};
@@ -398,7 +417,7 @@ function normalizeDraft(value) {
     Array.isArray(parsed.sections) && parsed.sections.length
       ? normalizeSections(parsed.sections)
       : normalizeSections(base.sections);
-  return {
+  const normalized = {
     ...base,
     ...parsed,
     draftId: parsed.draftId || parsed.reportId || crypto.randomUUID(),
@@ -412,6 +431,15 @@ function normalizeDraft(value) {
     issueUrl: parsed.issueUrl || "",
     sections,
   };
+  normalized.intro = normalizeJiraImagePlaceholderHtml(normalized.intro);
+  normalized.sections.forEach((section) => {
+    section.rows.forEach((row) => {
+      Object.keys(row.cells || {}).forEach((columnId) => {
+        row.cells[columnId] = normalizeJiraImagePlaceholderHtml(row.cells[columnId]);
+      });
+    });
+  });
+  return normalized;
 }
 
 function draftContentSnapshot(value = draft) {
@@ -2640,6 +2668,11 @@ function htmlToWiki(html) {
     if (node.nodeType === Node.TEXT_NODE) return node.textContent;
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
     if (node.matches?.(".cell-file")) return fileCardToWiki(node);
+    if (node.matches?.(".jira-image-placeholder")) {
+      const name = node.dataset.jiraName || "image.png";
+      const options = node.dataset.jiraOptions;
+      return `!${name}${options ? `|${options}` : ""}!`;
+    }
     const tag = node.tagName.toLowerCase();
     if ((tag === "span" && node.style.color) || (tag === "font" && node.getAttribute("color"))) {
       const content = [...node.childNodes].map(walk).join("");
@@ -2653,12 +2686,17 @@ function htmlToWiki(html) {
     if (tag === "em" || tag === "i") return `_${content}_`;
     if (tag === "u") return `+${content}+`;
     if (tag === "s" || tag === "strike") return `-${content}-`;
+    if (tag === "sup") return `^${content}^`;
+    if (tag === "sub") return `~${content}~`;
+    if (tag === "code" && node.parentElement?.tagName !== "PRE") return `{{${content}}}`;
     if (tag === "a") return `[${content}|${node.getAttribute("href") || ""}]`;
     if (tag === "pre") {
       return `{code}\n${extractCodeText(node)}\n{code}`;
     }
     if (tag === "img") {
       const name = node.dataset.jiraName || node.dataset.fileName || node.alt || "image.png";
+      const jiraOptions = node.dataset.jiraOptions;
+      if (jiraOptions) return `!${name}|${jiraOptions}!`;
       // Ссылка по имени вложения даёт Jira возможность открыть изображение
       // во встроенном просмотрщике, а параметр thumbnail оставляет его компактным.
       return `!${name}|thumbnail!`;

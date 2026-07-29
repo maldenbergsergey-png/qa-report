@@ -1,0 +1,4 @@
+[mcp_servers.jira]
+command = "node"
+args = ["C:\\Users\\User\\Desktop\\jira-mcp\\mcp-stdio.js"]
+cwd = "C:\\Users\\User\\Desktop\\jira-mcp"
