@@ -4224,10 +4224,9 @@ async function renderHistoryList() {
     item.classList.toggle("current", report.id === draft.reportId);
     const info = document.createElement("div");
     info.className = "history-item-info";
-    const sourceIcon = report.source === "server" ? "☁" : "⌘";
-    const sourceTitle = report.source === "server" ? "Облачная версия" : "Локальная версия";
     const publicId = reportPublicId(report);
-    info.innerHTML = `<h3>${escapeHtml(report.title)}</h3><p><span class="history-source-icon" title="${sourceTitle}" aria-label="${sourceTitle}">${sourceIcon}</span> <code>${escapeHtml(publicId)}</code> · ${new Date(report.updatedAt).toLocaleString("ru-RU")} · ${escapeHtml(report.overallStatus)}</p>`;
+    const issueLabel = report.issueKey || issueKeyFromUrl(report.issueUrl) || "Без задачи";
+    info.innerHTML = `<h3>${escapeHtml(issueLabel)}</h3><p><code>${escapeHtml(publicId)}</code> · ${new Date(report.updatedAt).toLocaleString("ru-RU")}</p>`;
     const commentField = document.createElement("textarea");
     commentField.className = "history-comment-field";
     commentField.rows = 2;
