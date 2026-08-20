@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=57" />
+    <link rel="stylesheet" href="/styles.css?v=60" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -640,17 +640,17 @@
         <header class="modal-header">
           <div>
             <div class="eyebrow">Настройки</div>
-            <h2 id="jiraSettingsTitle">Интеграции</h2>
+            <h2 id="jiraSettingsTitle">Настройки</h2>
           </div>
           <button class="icon-button" id="closeJiraSettingsButton" type="button" aria-label="Закрыть настройки">×</button>
         </header>
         <div class="settings-layout">
           <nav class="settings-sidebar" aria-label="Разделы настроек">
-            <button class="settings-nav-item active" id="settingsJiraSectionButton" type="button" data-settings-section="jira">
+            <button class="settings-nav-item" id="settingsJiraSectionButton" type="button" data-settings-section="jira" hidden>
               <svg class="ui-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
               <span>Jira</span>
             </button>
-            <button class="settings-nav-item" id="settingsFilesSectionButton" type="button" data-settings-section="files">
+            <button class="settings-nav-item active" id="settingsFilesSectionButton" type="button" data-settings-section="files">
               <svg class="ui-icon" aria-hidden="true"><use href="#icon-paperclip"></use></svg>
               <span>Файлы</span>
             </button>
@@ -660,7 +660,7 @@
             </button>
           </nav>
           <div class="settings-body">
-            <section class="settings-section active" id="settingsJiraSection" data-settings-panel="jira">
+            <section class="settings-section" id="settingsJiraSection" data-settings-panel="jira" hidden>
               <div class="settings-note">
                 Токен, пароль или cookie хранятся только в памяти открытой вкладки и исчезают после перезагрузки. Остальные настройки сохраняются локально в браузере.
               </div>
@@ -717,7 +717,7 @@
                 <div class="connection-state" id="jiraConnectionState">Соединение ещё не проверялось.</div>
               </div>
             </section>
-            <section class="settings-section" id="settingsFilesSection" data-settings-panel="files" hidden>
+            <section class="settings-section active" id="settingsFilesSection" data-settings-panel="files">
               <div class="settings-note">
                 Токены дисков используются только сервером приложения для загрузки файлов. В браузере сохраняются только признаки активности и путь/ID папки.
               </div>
@@ -858,7 +858,7 @@ chmod +x start.sh
           <div class="agent-pairing-card">
             <div>
               <span>Одноразовый код</span>
-              <strong id="agentPairingCode">— — — —</strong>
+              <strong id="agentPairingCode">••••••••</strong>
               <small id="agentPairingExpires">Код ещё не создан</small>
             </div>
             <div class="agent-pairing-actions"><button class="button button-secondary" id="copyAgentPairingCodeButton" type="button" data-agent-copy-target="agentPairingCode" disabled>Скопировать</button><button class="button button-primary" id="createAgentPairingButton" type="button">Создать код</button></div>
@@ -887,10 +887,18 @@ chmod +x start.sh
             <button class="button button-secondary" id="testAgentJiraButton" type="button" disabled>Проверить через агент</button>
           </div>
           </section>
+          <div class="agent-reset-wrap"><details class="agent-reset-card">
+            <summary><span><strong>Начать настройку заново</strong><small>Если агент помнит старый сервер, Jira или устройство</small></span><span class="agent-summary-chevron">›</span></summary>
+            <div class="agent-reset-content">
+              <ol><li>Остановите агент в терминале через <code>Ctrl+C</code>.</li><li>В папке <code>qa-report-agent</code> выполните команду ниже.</li><li>Создайте новый код и запустите файл <code>start</code> для своей ОС.</li></ol>
+              <div class="agent-command agent-command-compact"><button type="button" data-agent-copy-target="agentResetCommand">Скопировать</button><pre id="agentResetCommand">node qa-report-agent.js --reset</pre></div>
+              <p>Команда удалит привязку к QR Report, Jira credential и локальный TLS-CA. Сам агент и архив не удаляются.</p>
+            </div>
+          </details></div>
           <p class="agent-security-note"><strong>Безопасность.</strong> Jira credential хранится только в локальном файле агента с ограниченными правами и не отправляется серверу QR Report.</p>
         </div>
         <footer class="modal-footer">
-          <span class="agent-version-label">Local Agent 0.2.3</span>
+          <span class="agent-version-label">Local Agent 0.2.4</span>
           <button class="button button-secondary" id="closeAgentSetupFooterButton" type="button">Закрыть</button>
         </footer>
       </section>
@@ -991,6 +999,6 @@ chmod +x start.sh
     </template>
 
     <script src="/jira-markup-import.js?v=1"></script>
-    <script src="/app.js?v=67"></script>
+    <script src="/app.js?v=70"></script>
   </body>
 </html>

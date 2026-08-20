@@ -2146,6 +2146,68 @@ body.section-sticky-active .editor-toolbar::after {
   background: var(--surface-soft);
 }
 
+.agent-reset-wrap {
+  min-width: 0;
+}
+
+.agent-reset-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.agent-reset-card summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-reset-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-reset-card summary > span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.agent-reset-card summary small,
+.agent-reset-content {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.agent-reset-card[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-reset-card[open] .agent-summary-chevron {
+  transform: rotate(90deg);
+}
+
+.agent-reset-content {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.agent-reset-content ol {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 21px;
+}
+
+.agent-reset-content p {
+  margin: 0;
+}
+
 .agent-pairing-card {
   display: flex;
   align-items: center;
@@ -2790,6 +2852,10 @@ body.section-sticky-active .editor-toolbar::after {
   color: var(--muted);
   font-weight: 700;
   text-align: left;
+}
+
+.settings-nav-item[hidden] {
+  display: none;
 }
 
 .settings-nav-item:hover {

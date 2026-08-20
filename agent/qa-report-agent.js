@@ -9,7 +9,7 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const tls = require("node:tls");
 
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 
 function configDirectory() {
   if (process.env.QA_REPORT_AGENT_CONFIG_DIR) return path.resolve(process.env.QA_REPORT_AGENT_CONFIG_DIR);
@@ -572,8 +572,11 @@ async function run(config) {
 async function main() {
   ensureExtraCaRuntime();
   if (process.argv.includes("--reset")) {
-    try { fs.unlinkSync(CONFIG_FILE); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    console.log("Привязка устройства удалена.");
+    for (const file of [CONFIG_FILE, EXTRA_CA_FILE]) {
+      try { fs.unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+    console.log("Локальные настройки агента полностью удалены.");
+    console.log("Запустите start ещё раз и введите новый адрес QR Report и код подключения.");
     return;
   }
   let config = readConfig() || await pairAgent();

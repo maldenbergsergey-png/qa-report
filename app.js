@@ -3410,16 +3410,15 @@ function saveReportIdentitySettings() {
 }
 
 function setSettingsSection(section) {
-  const files = section === "files";
   const history = section === "history";
-  const jira = !files && !history;
-  elements.settingsJiraSectionButton.classList.toggle("active", jira);
+  const files = !history;
+  elements.settingsJiraSectionButton.classList.remove("active");
   elements.settingsFilesSectionButton.classList.toggle("active", files);
   elements.settingsHistorySectionButton.classList.toggle("active", history);
-  elements.settingsJiraSection.hidden = !jira;
+  elements.settingsJiraSection.hidden = true;
   elements.settingsFilesSection.hidden = !files;
   elements.settingsHistorySection.hidden = !history;
-  elements.settingsJiraSection.classList.toggle("active", jira);
+  elements.settingsJiraSection.classList.remove("active");
   elements.settingsFilesSection.classList.toggle("active", files);
   elements.settingsHistorySection.classList.toggle("active", history);
 }
@@ -3428,8 +3427,7 @@ function openJiraSettings() {
   fillJiraSettingsForm();
   fillStorageSettingsForm();
   fillReportIdentityForm();
-  setSettingsSection("jira");
-  setJiraSettingsTab("manual");
+  setSettingsSection("files");
   setSettingsSavedState(false);
   setConnectionState("Соединение ещё не проверялось.");
   setStorageConnectionState("Настройки файлового хранилища ещё не сохранялись.");
@@ -4153,10 +4151,7 @@ async function publishToJira() {
       error: message,
     });
     showToast(message, 9000);
-    if (shouldOpenJiraSettings(error)) {
-      if (jiraSettings.transport === "agent") openAgentSetup();
-      else openJiraSettings();
-    }
+    if (shouldOpenJiraSettings(error)) openAgentSetup();
   } finally {
     publishInProgress = false;
     publishAbortController = null;
@@ -6417,7 +6412,7 @@ async function createAgentPairing() {
   elements.createAgentPairingButton.textContent = "Создаём…";
   try {
     const result = await reportApi("/api/agent/pairings", { method: "POST", body: "{}" });
-    elements.agentPairingCode.textContent = `${result.code.slice(0, 4)} ${result.code.slice(4)}`;
+    elements.agentPairingCode.textContent = result.code;
     elements.agentPairingExpires.textContent = "Действует 10 минут и только для одного устройства";
     elements.copyAgentPairingCodeButton.disabled = false;
     elements.agentServerUrl.value = result.serverUrl;
@@ -7071,8 +7066,9 @@ elements.createAgentPairingButton.addEventListener("click", createAgentPairing);
 document.querySelectorAll("[data-agent-copy-target]").forEach((button) => {
   button.addEventListener("click", () => {
     const source = document.getElementById(button.dataset.agentCopyTarget);
-    const value = "value" in source ? source.value : source.textContent;
-    if (!String(value || "").trim() || String(value).includes("—")) {
+    let value = "value" in source ? source.value : source.textContent;
+    if (source === elements.agentPairingCode) value = String(value).replace(/\D/g, "");
+    if (!String(value || "").trim() || String(value).includes("—") || String(value).includes("•")) {
       showToast("Сначала создайте код подключения");
       return;
     }
