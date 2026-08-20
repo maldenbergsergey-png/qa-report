@@ -9,6 +9,7 @@ ENV REPORTS_DB_PATH=/app/reports-data/qa-report.sqlite
 
 COPY --chown=node:node package.json ./
 COPY --chown=node:node server.js app.js jira-markup-import.js index.html styles.css favicon.svg ./
+COPY --chown=node:node downloads ./downloads
 RUN mkdir -p /app/feedback-data /app/reports-data && chown -R node:node /app/feedback-data /app/reports-data
 
 USER node

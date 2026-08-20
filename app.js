@@ -11,7 +11,7 @@ const DB_NAME = "qa-report-editor";
 const DB_VERSION = 1;
 const REPORT_STORE = "reports";
 const HISTORY_LIMIT = 50;
-const REQUIRED_API_REVISION = 5;
+const REQUIRED_API_REVISION = 6;
 const FILE_ATTACHMENT_MAX_SIZE = 50 * 1024 * 1024;
 const ATTACHMENT_UPLOAD_BATCH_SIZE = 1;
 const { parseJiraMarkup, normalizeStatus } = window.QaReportJiraImport;
@@ -182,6 +182,20 @@ const elements = {
   focusModeButton: document.querySelector("#focusModeButton"),
   jiraMenuButton: document.querySelector("#jiraMenuButton"),
   jiraMenu: document.querySelector("#jiraMenu"),
+  agentMenuButton: document.querySelector("#agentMenuButton"),
+  agentMenu: document.querySelector("#agentMenu"),
+  openAgentSetupButton: document.querySelector("#openAgentSetupButton"),
+  agentSetupModal: document.querySelector("#agentSetupModal"),
+  closeAgentSetupButton: document.querySelector("#closeAgentSetupButton"),
+  closeAgentSetupFooterButton: document.querySelector("#closeAgentSetupFooterButton"),
+  createAgentPairingButton: document.querySelector("#createAgentPairingButton"),
+  copyAgentPairingCodeButton: document.querySelector("#copyAgentPairingCodeButton"),
+  agentPairingCode: document.querySelector("#agentPairingCode"),
+  agentPairingExpires: document.querySelector("#agentPairingExpires"),
+  agentServerUrl: document.querySelector("#agentServerUrl"),
+  agentConnectionState: document.querySelector("#agentConnectionState"),
+  agentJiraUrl: document.querySelector("#agentJiraUrl"),
+  testAgentJiraButton: document.querySelector("#testAgentJiraButton"),
   copyMenuButton: document.querySelector("#copyMenuButton"),
   copyMenu: document.querySelector("#copyMenu"),
   focusExitButton: document.querySelector("#focusExitButton"),
@@ -265,6 +279,8 @@ let reportClientId = loadReportClientId();
 let reportWorkspaceKey = loadReportWorkspaceKey();
 let serverReportHashes = loadServerReportHashes();
 let dismissedCloudHashes = loadDismissedCloudHashes();
+let agentStatusTimer = null;
+let agentStatusMessageUntil = 0;
 let undoStack = [];
 let redoStack = [];
 let historyCurrent = "";
@@ -3269,6 +3285,7 @@ function updateJiraSettingsLabels() {
 
 function readJiraSettingsForm() {
   return {
+    transport: jiraSettings.transport || "server",
     type: elements.jiraType.value,
     authMethod: elements.jiraType.value === "cloud" ? "api-token" : elements.jiraAuthMethod.value,
     baseUrl: elements.jiraBaseUrl.value.trim().replace(/\/+$/, ""),
@@ -3280,7 +3297,7 @@ function validateJiraSettings(settings, token) {
   if (!/^https?:\/\//i.test(settings.baseUrl)) {
     throw new Error("Укажите полный адрес Jira, начиная с http:// или https://");
   }
-  if (!token) {
+  if (settings.transport !== "agent" && !token) {
     throw new Error(
       settings.authMethod === "basic"
         ? "Укажите пароль"
@@ -3289,7 +3306,7 @@ function validateJiraSettings(settings, token) {
           : "Укажите токен",
     );
   }
-  if ((settings.type === "cloud" || settings.authMethod === "basic") && !settings.user) {
+  if (settings.transport !== "agent" && (settings.type === "cloud" || settings.authMethod === "basic") && !settings.user) {
     throw new Error(settings.type === "cloud" ? "Для Jira Cloud укажите email Atlassian" : "Укажите логин Jira");
   }
 }
@@ -3725,10 +3742,17 @@ async function jiraRequest(path, body, options = {}) {
   let attempt = 0;
   while (true) {
     try {
-      const response = await fetch(path, {
+      const useAgent = body?.transport === "agent" && path.startsWith("/api/jira/");
+      const requestPath = useAgent ? path.replace("/api/jira/", "/api/agent/jira/") : path;
+      const requestBody = { ...body };
+      if (useAgent) delete requestBody.token;
+      const response = await fetch(requestPath, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        headers: {
+          "Content-Type": "application/json",
+          ...(useAgent ? reportIdentityHeaders() : {}),
+        },
+        body: JSON.stringify(requestBody),
         signal,
       });
       const result = await response.json().catch(() => ({}));
@@ -3736,7 +3760,7 @@ async function jiraRequest(path, body, options = {}) {
         const retryAfter = Number(response.headers.get("Retry-After") || 0);
         throw new JiraRequestError(result.error || `Ошибка подключения: HTTP ${response.status}`, {
           status: response.status,
-          path,
+          path: requestPath,
           payload: result,
           retryAfter: Number.isFinite(retryAfter) ? retryAfter : 0,
           code: result.errorCode || "",
@@ -4061,6 +4085,17 @@ async function publishToJira() {
     }
     const issue = parseIssueUrl(draft.issueUrl);
     const settings = { ...jiraSettings };
+    if (settings.transport !== "agent" && !jiraSecret) {
+      const agentStatus = await reportApi("/api/agent/status").catch(() => ({ connected: false }));
+      if (agentStatus.connected) {
+        const issueOrigin = new URL(issue.issueUrl).origin;
+        settings.transport = "agent";
+        settings.baseUrl ||= issueOrigin;
+        settings.type = new URL(settings.baseUrl).hostname.endsWith(".atlassian.net") ? "cloud" : "data-center";
+        jiraSettings = { ...settings };
+        localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
+      }
+    }
     validateJiraSettings(settings, jiraSecret);
     await checkBackendCompatibility();
     if (draft.sections.length <= 1) {
@@ -4118,7 +4153,10 @@ async function publishToJira() {
       error: message,
     });
     showToast(message, 9000);
-    if (shouldOpenJiraSettings(error)) openJiraSettings();
+    if (shouldOpenJiraSettings(error)) {
+      if (jiraSettings.transport === "agent") openAgentSetup();
+      else openJiraSettings();
+    }
   } finally {
     publishInProgress = false;
     publishAbortController = null;
@@ -6340,9 +6378,140 @@ function applyTheme(theme) {
   });
 }
 
+function setAgentConnectionState({ connected = false, title, detail } = {}) {
+  elements.agentConnectionState.classList.toggle("connected", connected);
+  elements.agentConnectionState.querySelector("strong").textContent =
+    title || (connected ? "Локальный агент подключён" : "Агент не подключён");
+  elements.agentConnectionState.querySelector("small").textContent =
+    detail || (connected ? "Устройство готово принимать безопасные задания." : "Запустите агент на устройстве.");
+  elements.testAgentJiraButton.disabled = !connected;
+}
+
+async function refreshAgentStatus() {
+  try {
+    const result = await reportApi("/api/agent/status");
+    const active = result.devices?.find((device) => device.online);
+    if (active) {
+      if (Date.now() < agentStatusMessageUntil) return true;
+      setAgentConnectionState({
+        connected: true,
+        title: active.name || "Локальный агент подключён",
+        detail: `${active.platform} · связь установлена только что`,
+      });
+      return true;
+    }
+    const lastDevice = result.devices?.[0];
+    setAgentConnectionState({
+      connected: false,
+      title: lastDevice ? `${lastDevice.name} не в сети` : "Агент не подключён",
+      detail: lastDevice ? "Запустите агент или проверьте доступ к QR Report." : "Создайте код и запустите агент на устройстве.",
+    });
+  } catch (error) {
+    setAgentConnectionState({ connected: false, title: "Не удалось проверить агента", detail: error.message });
+  }
+  return false;
+}
+
+async function createAgentPairing() {
+  elements.createAgentPairingButton.disabled = true;
+  elements.createAgentPairingButton.textContent = "Создаём…";
+  try {
+    const result = await reportApi("/api/agent/pairings", { method: "POST", body: "{}" });
+    elements.agentPairingCode.textContent = `${result.code.slice(0, 4)} ${result.code.slice(4)}`;
+    elements.agentPairingExpires.textContent = "Действует 10 минут и только для одного устройства";
+    elements.copyAgentPairingCodeButton.disabled = false;
+    elements.agentServerUrl.value = result.serverUrl;
+    showToast("Код подключения создан");
+  } catch (error) {
+    elements.agentPairingExpires.textContent = error.message;
+  } finally {
+    elements.createAgentPairingButton.disabled = false;
+    elements.createAgentPairingButton.textContent = "Создать новый код";
+  }
+}
+
+function openAgentSetup() {
+  closeHeaderDropdowns();
+  elements.agentServerUrl.value = window.location.origin;
+  elements.agentJiraUrl.value ||= jiraSettings.baseUrl || "";
+  const platformName = String(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || "").toLowerCase();
+  const preferredPlatform = platformName.includes("win") ? "windows" : platformName.includes("linux") ? "linux" : "macos";
+  document.querySelectorAll("[data-agent-platform]").forEach((card) => {
+    card.open = card.dataset.agentPlatform === preferredPlatform;
+  });
+  elements.agentSetupModal.hidden = false;
+  syncBodyModalOverflow();
+  refreshAgentStatus();
+  clearInterval(agentStatusTimer);
+  agentStatusTimer = setInterval(refreshAgentStatus, 3000);
+  elements.agentSetupModal.querySelector(".agent-setup-body").scrollTop = 0;
+  elements.closeAgentSetupButton.focus({ preventScroll: true });
+}
+
+function closeAgentSetup() {
+  clearInterval(agentStatusTimer);
+  agentStatusTimer = null;
+  elements.agentSetupModal.hidden = true;
+  syncBodyModalOverflow();
+}
+
+async function testJiraThroughAgent() {
+  const baseUrl = elements.agentJiraUrl.value.trim();
+  if (!baseUrl) {
+    showToast("Укажите адрес Jira");
+    elements.agentJiraUrl.focus();
+    return;
+  }
+  elements.testAgentJiraButton.disabled = true;
+  elements.testAgentJiraButton.textContent = "Проверяем…";
+  setAgentConnectionState({ connected: true, title: "Проверяем Jira через устройство", detail: "Запрос выполняется в сети и VPN локального агента." });
+  try {
+    const created = await reportApi("/api/agent/jobs", {
+      method: "POST",
+      body: JSON.stringify({ type: "jira.network-test", baseUrl }),
+    });
+    let completed;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await wait(700);
+      const state = await reportApi(`/api/agent/jobs/${created.jobId}`);
+      if (["completed", "failed", "expired"].includes(state.job.status)) {
+        completed = state.job;
+        break;
+      }
+    }
+    if (!completed) throw new Error("Агент не ответил за отведённое время");
+    if (completed.status !== "completed") throw new Error(completed.error || "Проверка завершилась с ошибкой");
+    const result = completed.result;
+    const detail = result.browserChallenge
+      ? `Jira доступна, но вернула SSO/WAF-переход (HTTP ${result.status}, ${result.durationMs} мс).`
+      : result.authRequired
+        ? `Jira доступна и запросила авторизацию (HTTP ${result.status}, ${result.durationMs} мс).`
+        : `Jira ответила HTTP ${result.status} за ${result.durationMs} мс.`;
+    setAgentConnectionState({ connected: true, title: "Jira видна с устройства", detail });
+    agentStatusMessageUntil = Date.now() + 15_000;
+    const parsedBase = new URL(baseUrl);
+    jiraSettings = {
+      ...jiraSettings,
+      transport: "agent",
+      type: parsedBase.hostname.endsWith(".atlassian.net") ? "cloud" : "data-center",
+      baseUrl: baseUrl.replace(/\/+$/, ""),
+    };
+    localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
+    showToast("Сетевая проверка Jira завершена");
+  } catch (error) {
+    setAgentConnectionState({ connected: true, title: "Агент подключён, Jira недоступна", detail: error.message });
+    agentStatusMessageUntil = Date.now() + 15_000;
+    showToast(`Проверка Jira: ${error.message}`, 7000);
+  } finally {
+    elements.testAgentJiraButton.disabled = false;
+    elements.testAgentJiraButton.textContent = "Проверить через агент";
+  }
+}
+
 function closeHeaderDropdowns(exceptMenu = null) {
   [
     [elements.jiraMenuButton, elements.jiraMenu],
+    [elements.agentMenuButton, elements.agentMenu],
     [elements.copyMenuButton, elements.copyMenu],
   ].forEach(([button, menu]) => {
     if (!button || !menu || menu === exceptMenu) return;
@@ -6358,7 +6527,7 @@ function toggleHeaderDropdown(button, menu) {
   menu.hidden = !willOpen;
   button.setAttribute("aria-expanded", String(willOpen));
   button.closest(".header-dropdown")?.classList.toggle("open", willOpen);
-  if (willOpen) menu.querySelector("button:not(:disabled)")?.focus();
+  if (willOpen) menu.querySelector("[role='menuitem']:not(:disabled)")?.focus();
 }
 
 function askConfirmation(message, options = {}) {
@@ -6884,12 +7053,33 @@ elements.jiraMenuButton.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleHeaderDropdown(elements.jiraMenuButton, elements.jiraMenu);
 });
+elements.agentMenuButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleHeaderDropdown(elements.agentMenuButton, elements.agentMenu);
+});
 elements.copyMenuButton.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleHeaderDropdown(elements.copyMenuButton, elements.copyMenu);
 });
 elements.jiraMenu.addEventListener("click", () => closeHeaderDropdowns());
+elements.agentMenu.addEventListener("click", () => closeHeaderDropdowns());
 elements.copyMenu.addEventListener("click", () => closeHeaderDropdowns());
+elements.openAgentSetupButton.addEventListener("click", openAgentSetup);
+elements.closeAgentSetupButton.addEventListener("click", closeAgentSetup);
+elements.closeAgentSetupFooterButton.addEventListener("click", closeAgentSetup);
+elements.createAgentPairingButton.addEventListener("click", createAgentPairing);
+document.querySelectorAll("[data-agent-copy-target]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const source = document.getElementById(button.dataset.agentCopyTarget);
+    const value = "value" in source ? source.value : source.textContent;
+    if (!String(value || "").trim() || String(value).includes("—")) {
+      showToast("Сначала создайте код подключения");
+      return;
+    }
+    writeClipboardText(String(value).trim(), "Скопировано");
+  });
+});
+elements.testAgentJiraButton.addEventListener("click", testJiraThroughAgent);
 elements.previewButton.addEventListener("click", openPreview);
 elements.feedbackButton.addEventListener("click", openFeedback);
 elements.closeFeedbackButton.addEventListener("click", closeFeedback);
@@ -7133,6 +7323,11 @@ document.addEventListener("click", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (!elements.agentSetupModal.hidden) {
+    closeAgentSetup();
+    elements.agentMenuButton.focus();
+    return;
+  }
   if (!elements.textColorMenu.hidden) {
     closeTextColorMenu();
     elements.textColorInput.focus();

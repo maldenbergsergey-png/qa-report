@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f6f7fb" />
     <title>QA Report — редактор чек-листов</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=55" />
+    <link rel="stylesheet" href="/styles.css?v=57" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -18,6 +18,7 @@
       <symbol id="icon-eye" viewBox="0 0 24 24"><path d="M2.1 12s3.6-7 9.9-7 9.9 7 9.9 7-3.6 7-9.9 7-9.9-7-9.9-7Z" /><circle cx="12" cy="12" r="3" /></symbol>
       <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
       <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></symbol>
+      <symbol id="icon-device" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></symbol>
       <symbol id="icon-import" viewBox="0 0 24 24"><path d="M12 3v10m0 0 4-4m-4 4-4-4" /><path d="M5 15v4h14v-4" /></symbol>
       <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 21V9m0 0 5 5m-5-5-5 5M5 3h14" /></symbol>
       <symbol id="icon-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></symbol>
@@ -125,7 +126,7 @@
 
         <div class="header-integrations">
           <div class="header-dropdown">
-            <button class="header-dropdown-trigger" id="jiraMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="jiraMenu">
+            <button class="header-dropdown-trigger" id="jiraMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="jiraMenu" aria-label="Jira" title="Jira">
               <svg class="ui-icon dropdown-leading-icon" aria-hidden="true"><use href="#icon-ticket"></use></svg>
               <span>Jira</span>
               <svg class="ui-icon chevron-icon" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
@@ -143,7 +144,34 @@
           </div>
 
           <div class="header-dropdown">
-            <button class="header-dropdown-trigger" id="copyMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="copyMenu">
+            <button class="header-dropdown-trigger" id="agentMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="agentMenu" aria-label="Локальный агент" title="Локальный агент">
+              <svg class="ui-icon dropdown-leading-icon" aria-hidden="true"><use href="#icon-device"></use></svg>
+              <span>Агент</span>
+              <svg class="ui-icon chevron-icon" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
+            </button>
+            <div class="header-dropdown-menu header-dropdown-menu-right" id="agentMenu" role="menu" hidden>
+              <a class="header-dropdown-item" href="/downloads/qa-report-agent-macos.zip" download role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+                <span>Скачать для macOS</span>
+              </a>
+              <a class="header-dropdown-item" href="/downloads/qa-report-agent-windows.zip" download role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+                <span>Скачать для Windows</span>
+              </a>
+              <a class="header-dropdown-item" href="/downloads/qa-report-agent-linux.zip" download role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+                <span>Скачать для Linux</span>
+              </a>
+              <div class="header-dropdown-divider"></div>
+              <button class="header-dropdown-item" id="openAgentSetupButton" type="button" role="menuitem">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-link"></use></svg>
+                <span>Настройки подключения</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="header-dropdown">
+            <button class="header-dropdown-trigger" id="copyMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="copyMenu" aria-label="Скопировать как" title="Скопировать как">
               <svg class="ui-icon dropdown-leading-icon" aria-hidden="true"><use href="#icon-table"></use></svg>
               <span>Скопировать как</span>
               <svg class="ui-icon chevron-icon" aria-hidden="true"><use href="#icon-chevron-down"></use></svg>
@@ -766,6 +794,108 @@
       </section>
     </div>
 
+    <div class="modal-backdrop" id="agentSetupModal" hidden>
+      <section class="modal agent-setup-modal" role="dialog" aria-modal="true" aria-labelledby="agentSetupTitle">
+        <header class="modal-header">
+          <div>
+            <div class="eyebrow">Jira через VPN</div>
+            <h2 id="agentSetupTitle">Настройки подключения</h2>
+          </div>
+          <button class="icon-button" id="closeAgentSetupButton" type="button" aria-label="Закрыть">×</button>
+        </header>
+        <div class="agent-setup-body">
+          <div class="agent-guide-intro">
+            <strong>Агент позволяет QR Report работать с Jira через VPN вашего компьютера.</strong>
+            <span>Пройдите 4 шага. Терминал должен оставаться открытым во время публикации.</span>
+          </div>
+
+          <section class="agent-guide-section">
+            <div class="agent-guide-heading"><span>1</span><div><strong>Установите и запустите агент</strong><small>Откройте инструкцию для своей операционной системы.</small></div></div>
+            <div class="agent-platform-list">
+              <details class="agent-platform-card" data-agent-platform="macos">
+                <summary><span class="agent-platform-icon"></span><span><strong>macOS</strong><small>MacBook, iMac, Mac mini</small></span><span class="agent-summary-chevron">›</span></summary>
+                <div class="agent-platform-content">
+                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-macos.zip" download>Скачать агент для macOS</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
+                  <ol><li>Установите Node.js LTS. После установки откройте «Терминал».</li><li>Подключите корпоративный VPN.</li><li>Скопируйте весь блок ниже в терминал и нажмите Enter.</li></ol>
+                  <div class="agent-command"><button type="button" data-agent-copy-target="agentMacCommands">Скопировать</button><pre id="agentMacCommands">cd ~/Downloads
+unzip -o qa-report-agent-macos.zip
+cd qa-report-agent
+xattr -dr com.apple.quarantine .
+chmod +x start.command
+./start.command</pre></div>
+                  <p>Если macOS заблокировала файл, команда <code>xattr</code> в блоке выше снимет метку карантина.</p>
+                </div>
+              </details>
+              <details class="agent-platform-card" data-agent-platform="windows">
+                <summary><span class="agent-platform-icon">⊞</span><span><strong>Windows</strong><small>Windows 10 и 11</small></span><span class="agent-summary-chevron">›</span></summary>
+                <div class="agent-platform-content">
+                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-windows.zip" download>Скачать агент для Windows</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
+                  <ol><li>Установите Node.js LTS и перезапустите PowerShell.</li><li>Подключите VPN.</li><li>Откройте PowerShell, скопируйте блок и нажмите Enter.</li></ol>
+                  <div class="agent-command"><button type="button" data-agent-copy-target="agentWindowsCommands">Скопировать</button><pre id="agentWindowsCommands">cd $HOME\Downloads
+Expand-Archive -Path .\qa-report-agent-windows.zip -DestinationPath . -Force
+cd .\qa-report-agent
+.\start.cmd</pre></div>
+                </div>
+              </details>
+              <details class="agent-platform-card" data-agent-platform="linux">
+                <summary><span class="agent-platform-icon">◇</span><span><strong>Linux</strong><small>Ubuntu, Debian и другие</small></span><span class="agent-summary-chevron">›</span></summary>
+                <div class="agent-platform-content">
+                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-linux.zip" download>Скачать агент для Linux</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
+                  <ol><li>Установите Node.js 18 или новее.</li><li>Подключите VPN.</li><li>Скопируйте блок в терминал и нажмите Enter.</li></ol>
+                  <div class="agent-command"><button type="button" data-agent-copy-target="agentLinuxCommands">Скопировать</button><pre id="agentLinuxCommands">cd ~/Downloads
+unzip -o qa-report-agent-linux.zip
+cd qa-report-agent
+chmod +x start.sh
+./start.sh</pre></div>
+                </div>
+              </details>
+            </div>
+            <div class="agent-node-check"><span>Проверка Node.js:</span><code id="agentNodeCheckCommand">node --version</code><button type="button" data-agent-copy-target="agentNodeCheckCommand">Скопировать</button><small>В ответе должно быть <b>v18</b> или новее.</small></div>
+          </section>
+
+          <section class="agent-guide-section">
+            <div class="agent-guide-heading"><span>2</span><div><strong>Подключите устройство</strong><small>Агент сам запросит адрес QR Report, код и имя компьютера.</small></div></div>
+          <div class="agent-pairing-card">
+            <div>
+              <span>Одноразовый код</span>
+              <strong id="agentPairingCode">— — — —</strong>
+              <small id="agentPairingExpires">Код ещё не создан</small>
+            </div>
+            <div class="agent-pairing-actions"><button class="button button-secondary" id="copyAgentPairingCodeButton" type="button" data-agent-copy-target="agentPairingCode" disabled>Скопировать</button><button class="button button-primary" id="createAgentPairingButton" type="button">Создать код</button></div>
+          </div>
+          <div class="agent-copy-field"><label class="field"><span>Адрес QR Report для агента</span><input id="agentServerUrl" type="url" readonly value="" /></label><button class="button button-secondary" type="button" data-agent-copy-target="agentServerUrl">Скопировать</button></div>
+          <div class="agent-connection-state" id="agentConnectionState" aria-live="polite">
+            <span class="agent-state-dot"></span>
+            <div><strong>Агент не подключён</strong><small>Создайте код и запустите агент на устройстве.</small></div>
+          </div>
+          </section>
+
+          <section class="agent-guide-section">
+            <div class="agent-guide-heading"><span>3</span><div><strong>Настройте доступ к Jira</strong><small>При первом запуске мастер откроется автоматически.</small></div></div>
+            <div class="agent-auth-options"><div><strong>Personal Access Token</strong><span>Самый простой вариант, если Jira позволяет создать PAT.</span></div><div><strong>Copy as cURL</strong><span>Используйте для SSO и 2FA: скопируйте запрос из авторизованной вкладки Jira.</span></div></div>
+            <p class="agent-reconfigure-hint">Если токен или SSO-cookie изменились, остановите агент через <code>Ctrl+C</code> и выполните:</p>
+            <div class="agent-command agent-command-compact"><button type="button" data-agent-copy-target="agentConfigureCommand">Скопировать</button><pre id="agentConfigureCommand">node qa-report-agent.js --configure-jira</pre></div>
+          </section>
+
+          <section class="agent-guide-section">
+            <div class="agent-guide-heading"><span>4</span><div><strong>Проверьте и начните работу</strong><small>Убедитесь, что VPN включён, а окно агента остаётся открытым.</small></div></div>
+          <div class="agent-test-row">
+            <label class="field">
+              <span>Адрес Jira</span>
+              <input id="agentJiraUrl" type="url" placeholder="https://jira.company.local" />
+            </label>
+            <button class="button button-secondary" id="testAgentJiraButton" type="button" disabled>Проверить через агент</button>
+          </div>
+          </section>
+          <p class="agent-security-note"><strong>Безопасность.</strong> Jira credential хранится только в локальном файле агента с ограниченными правами и не отправляется серверу QR Report.</p>
+        </div>
+        <footer class="modal-footer">
+          <span class="agent-version-label">Local Agent 0.2.3</span>
+          <button class="button button-secondary" id="closeAgentSetupFooterButton" type="button">Закрыть</button>
+        </footer>
+      </section>
+    </div>
+
     <div class="modal-backdrop" id="versionConflictModal" hidden>
       <section class="modal version-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="versionConflictTitle">
         <header class="modal-header">
@@ -861,6 +991,6 @@
     </template>
 
     <script src="/jira-markup-import.js?v=1"></script>
-    <script src="/app.js?v=61"></script>
+    <script src="/app.js?v=67"></script>
   </body>
 </html>

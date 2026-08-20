@@ -42,8 +42,10 @@ function readSizeMb(name, fallback) {
 const MAX_BODY = readSizeMb("QA_REPORT_MAX_BODY_MB", 150);
 const MAX_ATTACHMENT_FILE = readSizeMb("QA_REPORT_MAX_ATTACHMENT_MB", 50);
 const STORE_REPORT_ATTACHMENTS = process.env.QA_REPORT_STORE_ATTACHMENTS === "true";
-const APP_VERSION = "0.2.2";
-const API_REVISION = 5;
+const APP_VERSION = "0.3.0";
+const API_REVISION = 6;
+const AGENT_PAIRING_TTL_MS = 10 * 60 * 1000;
+const AGENT_JOB_TTL_MS = 5 * 60 * 1000;
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
 const REPORTS_DB_PATH = process.env.REPORTS_DB_PATH || path.join(ROOT, "reports-data", "qa-report.sqlite");
 const feedbackRateLimit = new Map();
@@ -77,6 +79,7 @@ const MIME_TYPES = {
   ".gif": "image/gif",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
+  ".zip": "application/zip",
 };
 
 function sendJson(response, status, payload) {
@@ -181,6 +184,44 @@ function getReportsDb() {
       ON reports(owner_source, owner_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_reports_workspace_updated
       ON reports(workspace_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_pairing_codes (
+      code_hash TEXT PRIMARY KEY,
+      owner_source TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS agent_devices (
+      id TEXT PRIMARY KEY,
+      owner_source TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      version TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      revoked_at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_devices_owner
+      ON agent_devices(owner_source, owner_id, last_seen_at DESC);
+    CREATE TABLE IF NOT EXISTS agent_jobs (
+      id TEXT PRIMARY KEY,
+      owner_source TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      result_json TEXT NOT NULL DEFAULT '{}',
+      error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY(device_id) REFERENCES agent_devices(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_jobs_device
+      ON agent_jobs(device_id, status, created_at);
   `);
   const columns = reportsDb.prepare("PRAGMA table_info(reports)").all().map((column) => column.name);
   if (!columns.includes("content_hash")) {
@@ -333,6 +374,283 @@ function resolveReportOwner(request) {
     label: "Анонимный доступ",
     workspaceId: `anonymous:${anonymousId}`,
   };
+}
+
+function agentPublicRecord(row) {
+  const lastSeenAt = row.last_seen_at || "";
+  return {
+    id: row.id,
+    name: row.name,
+    platform: row.platform,
+    version: row.version,
+    createdAt: row.created_at,
+    lastSeenAt,
+    online: Boolean(lastSeenAt && Date.now() - Date.parse(lastSeenAt) < 45_000),
+  };
+}
+
+function cleanupAgentRecords(db = getReportsDb()) {
+  const now = new Date().toISOString();
+  db.prepare("DELETE FROM agent_pairing_codes WHERE expires_at <= ?").run(now);
+  db.prepare("UPDATE agent_jobs SET status = 'expired', updated_at = ? WHERE status IN ('queued', 'running') AND expires_at <= ?")
+    .run(now, now);
+}
+
+function requireAgent(request) {
+  const authorization = firstHeader(request, ["authorization"]);
+  const match = authorization.match(/^Bearer\s+([a-f0-9-]{36})\.([A-Za-z0-9_-]{32,})$/i);
+  if (!match) {
+    const error = new Error("Не передан корректный ключ локального агента");
+    error.status = 401;
+    throw error;
+  }
+  const db = getReportsDb();
+  const device = db.prepare("SELECT * FROM agent_devices WHERE id = ? AND revoked_at = ''").get(match[1]);
+  const actual = Buffer.from(stableHash(match[2]));
+  const expected = Buffer.from(String(device?.token_hash || ""));
+  if (!device || actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+    const error = new Error("Ключ локального агента недействителен");
+    error.status = 401;
+    throw error;
+  }
+  db.prepare("UPDATE agent_devices SET last_seen_at = ? WHERE id = ?").run(new Date().toISOString(), device.id);
+  return device;
+}
+
+async function handleAgentPairingCreate(request, response) {
+  const owner = resolveReportOwner(request);
+  const db = getReportsDb();
+  cleanupAgentRecords(db);
+  let code;
+  let codeHash;
+  do {
+    code = String(crypto.randomInt(0, 100_000_000)).padStart(8, "0");
+    codeHash = stableHash(code);
+  } while (db.prepare("SELECT 1 FROM agent_pairing_codes WHERE code_hash = ?").get(codeHash));
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + AGENT_PAIRING_TTL_MS);
+  db.prepare(`
+    INSERT INTO agent_pairing_codes(code_hash, owner_source, owner_id, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(codeHash, owner.source, owner.id, now.toISOString(), expiresAt.toISOString());
+  sendJson(response, 201, {
+    code,
+    serverUrl: requestOrigin(request),
+    expiresAt: expiresAt.toISOString(),
+  });
+}
+
+async function handleAgentPair(request, response) {
+  const body = await readJson(request);
+  const code = String(body.code || "").replace(/\D/g, "");
+  if (!/^\d{8}$/.test(code)) {
+    const error = new Error("Код сопряжения должен содержать 8 цифр");
+    error.status = 422;
+    throw error;
+  }
+  const db = getReportsDb();
+  cleanupAgentRecords(db);
+  const pairing = db.prepare("SELECT * FROM agent_pairing_codes WHERE code_hash = ?").get(stableHash(code));
+  if (!pairing) {
+    const error = new Error("Код сопряжения не найден или истёк");
+    error.status = 404;
+    throw error;
+  }
+  const deviceId = crypto.randomUUID();
+  const secret = crypto.randomBytes(32).toString("base64url");
+  const now = new Date().toISOString();
+  const name = normalizeIdentityPart(body.name, "Локальный агент").slice(0, 100);
+  const platform = normalizeIdentityPart(body.platform, "unknown").slice(0, 40);
+  const version = normalizeIdentityPart(body.version, "0.1.0").slice(0, 30);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      INSERT INTO agent_devices(id, owner_source, owner_id, name, platform, version, token_hash, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(deviceId, pairing.owner_source, pairing.owner_id, name, platform, version, stableHash(secret), now, now);
+    db.prepare("DELETE FROM agent_pairing_codes WHERE code_hash = ?").run(pairing.code_hash);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  sendJson(response, 201, { deviceId, secret });
+}
+
+async function handleAgentStatus(request, response) {
+  const owner = resolveReportOwner(request);
+  const db = getReportsDb();
+  cleanupAgentRecords(db);
+  const devices = db.prepare(`
+    SELECT * FROM agent_devices
+    WHERE owner_source = ? AND owner_id = ? AND revoked_at = ''
+    ORDER BY last_seen_at DESC
+  `).all(owner.source, owner.id).map(agentPublicRecord);
+  sendJson(response, 200, { devices, connected: devices.some((device) => device.online) });
+}
+
+async function handleAgentJobCreate(request, response) {
+  const owner = resolveReportOwner(request);
+  const body = await readJson(request);
+  if (body.type !== "jira.network-test") {
+    const error = new Error("Этот тип задания локального агента не разрешён");
+    error.status = 422;
+    throw error;
+  }
+  let baseUrl;
+  try {
+    const parsed = new URL(String(body.baseUrl || ""));
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error();
+    parsed.hash = "";
+    parsed.search = "";
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    baseUrl = parsed.toString().replace(/\/$/, "");
+  } catch {
+    const error = new Error("Укажите корректный http(s) адрес Jira без логина и пароля");
+    error.status = 422;
+    throw error;
+  }
+  const { jobId, device } = createAgentJob(owner, body.type, { baseUrl });
+  sendJson(response, 202, { jobId, device: agentPublicRecord(device) });
+}
+
+function createAgentJob(owner, type, payload) {
+  const db = getReportsDb();
+  cleanupAgentRecords(db);
+  const device = db.prepare(`
+    SELECT * FROM agent_devices
+    WHERE owner_source = ? AND owner_id = ? AND revoked_at = ''
+    ORDER BY last_seen_at DESC LIMIT 1
+  `).get(owner.source, owner.id);
+  if (!device || Date.now() - Date.parse(device.last_seen_at) >= 45_000) {
+    const error = new Error("Локальный агент не подключён");
+    error.status = 409;
+    throw error;
+  }
+  const jobId = crypto.randomUUID();
+  const now = new Date();
+  db.prepare(`
+    INSERT INTO agent_jobs(id, owner_source, owner_id, device_id, type, payload_json, status, created_at, updated_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+  `).run(
+    jobId, owner.source, owner.id, device.id, type, JSON.stringify(payload),
+    now.toISOString(), now.toISOString(), new Date(now.getTime() + AGENT_JOB_TTL_MS).toISOString(),
+  );
+  return { jobId, device };
+}
+
+async function waitForAgentJob(owner, jobId, timeoutMs = 120_000) {
+  const db = getReportsDb();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const job = db.prepare("SELECT * FROM agent_jobs WHERE id = ? AND owner_source = ? AND owner_id = ?")
+      .get(jobId, owner.source, owner.id);
+    if (!job) throw new Error("Задание локального агента исчезло");
+    if (job.status === "completed") return JSON.parse(job.result_json || "{}");
+    if (["failed", "expired"].includes(job.status)) {
+      const error = new Error(job.error || "Локальный агент не выполнил Jira-запрос");
+      error.status = Number(JSON.parse(job.result_json || "{}").status || 502);
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  const error = new Error("Локальный агент не ответил за отведённое время");
+  error.status = 504;
+  throw error;
+}
+
+async function handleAgentJiraRequest(request, response, action) {
+  const owner = resolveReportOwner(request);
+  const body = await readJson(request);
+  const allowed = new Set(["test", "comment", "attachments", "import-comment"]);
+  if (!allowed.has(action)) {
+    const error = new Error("Эта Jira-команда локального агента не разрешена");
+    error.status = 404;
+    throw error;
+  }
+  const payload = { ...body };
+  delete payload.token;
+  delete payload.password;
+  delete payload.cookie;
+  delete payload.authorization;
+  if (action === "attachments" && (!Array.isArray(payload.files) || payload.files.length > 20)) {
+    const error = new Error("За один раз можно передать локальному агенту не более 20 вложений");
+    error.status = 422;
+    throw error;
+  }
+  const { jobId } = createAgentJob(owner, `jira.${action}`, payload);
+  const result = await waitForAgentJob(owner, jobId);
+  sendJson(response, action === "comment" ? 201 : 200, result);
+}
+
+async function handleAgentJobGet(request, response, jobId) {
+  const owner = resolveReportOwner(request);
+  const db = getReportsDb();
+  cleanupAgentRecords(db);
+  const job = db.prepare("SELECT * FROM agent_jobs WHERE id = ? AND owner_source = ? AND owner_id = ?")
+    .get(jobId, owner.source, owner.id);
+  if (!job) {
+    const error = new Error("Задание локального агента не найдено");
+    error.status = 404;
+    throw error;
+  }
+  sendJson(response, 200, {
+    job: {
+      id: job.id,
+      type: job.type,
+      status: job.status,
+      result: JSON.parse(job.result_json || "{}"),
+      error: job.error,
+      updatedAt: job.updated_at,
+    },
+  });
+}
+
+async function handleAgentPoll(request, response) {
+  const device = requireAgent(request);
+  const body = await readJson(request);
+  const db = getReportsDb();
+  cleanupAgentRecords(db);
+  const reportedVersion = normalizeIdentityPart(body.version, "").slice(0, 30);
+  if (reportedVersion && reportedVersion !== device.version) {
+    db.prepare("UPDATE agent_devices SET version = ? WHERE id = ?").run(reportedVersion, device.id);
+    device.version = reportedVersion;
+  }
+  const job = db.prepare(`
+    SELECT * FROM agent_jobs WHERE device_id = ? AND status = 'queued'
+    ORDER BY created_at ASC LIMIT 1
+  `).get(device.id);
+  if (!job) {
+    sendJson(response, 200, { job: null, pollAfterMs: 2500 });
+    return;
+  }
+  const now = new Date().toISOString();
+  db.prepare("UPDATE agent_jobs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'queued'").run(now, job.id);
+  sendJson(response, 200, {
+    job: { id: job.id, type: job.type, payload: JSON.parse(job.payload_json) },
+  });
+}
+
+async function handleAgentJobResult(request, response, jobId) {
+  const device = requireAgent(request);
+  const body = await readJson(request);
+  const db = getReportsDb();
+  const job = db.prepare("SELECT * FROM agent_jobs WHERE id = ? AND device_id = ?").get(jobId, device.id);
+  if (!job) {
+    const error = new Error("Задание локального агента не найдено");
+    error.status = 404;
+    throw error;
+  }
+  const status = body.ok ? "completed" : "failed";
+  db.prepare("UPDATE agent_jobs SET status = ?, result_json = ?, error = ?, updated_at = ? WHERE id = ?")
+    .run(
+      status,
+      JSON.stringify(body.result || (body.status ? { status: body.status } : {})),
+      String(body.error || "").slice(0, 1000),
+      new Date().toISOString(),
+      job.id,
+    );
+  sendJson(response, 200, { ok: true });
 }
 
 function issueKeyFromUrl(value) {
@@ -1546,6 +1864,41 @@ const server = http.createServer(async (request, response) => {
     const requestPath = new URL(request.url, "http://localhost").pathname;
     if (request.method === "GET" && requestPath === "/api/health") {
       sendJson(response, 200, { ok: true, service: "qa-report" });
+      return;
+    }
+    if (request.method === "POST" && requestPath === "/api/agent/pairings") {
+      await handleAgentPairingCreate(request, response);
+      return;
+    }
+    if (request.method === "POST" && requestPath === "/api/agent/pair") {
+      await handleAgentPair(request, response);
+      return;
+    }
+    if (request.method === "GET" && requestPath === "/api/agent/status") {
+      await handleAgentStatus(request, response);
+      return;
+    }
+    if (request.method === "POST" && requestPath === "/api/agent/jobs") {
+      await handleAgentJobCreate(request, response);
+      return;
+    }
+    const agentJiraMatch = requestPath.match(/^\/api\/agent\/jira\/(test|comment|attachments|import-comment)$/);
+    if (request.method === "POST" && agentJiraMatch) {
+      await handleAgentJiraRequest(request, response, agentJiraMatch[1]);
+      return;
+    }
+    const agentJobMatch = requestPath.match(/^\/api\/agent\/jobs\/([a-f0-9-]{36})$/i);
+    const agentJobResultMatch = requestPath.match(/^\/api\/agent\/jobs\/([a-f0-9-]{36})\/result$/i);
+    if (request.method === "GET" && agentJobMatch) {
+      await handleAgentJobGet(request, response, agentJobMatch[1]);
+      return;
+    }
+    if (request.method === "POST" && agentJobResultMatch) {
+      await handleAgentJobResult(request, response, agentJobResultMatch[1]);
+      return;
+    }
+    if (request.method === "POST" && requestPath === "/api/agent/poll") {
+      await handleAgentPoll(request, response);
       return;
     }
     if (request.method === "GET" && requestPath === "/api/reports") {

@@ -135,7 +135,7 @@ async function main() {
     const commentResult = await commentResponse.json();
     assert.equal(commentResult.verified, true);
     assert.equal(commentResult.commentId, "10001");
-    assert.equal(commentResult.apiRevision, 5);
+    assert.equal(commentResult.apiRevision, 6);
     const patTestRequest = received.find((item) => item.url === "/rest/api/2/myself");
     assert.equal(patTestRequest.authorization, "Bearer secret-pat");
     const cloudCommentRequest = received.find(
