@@ -9,7 +9,7 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const tls = require("node:tls");
 
-const VERSION = "0.2.4";
+const VERSION = "0.2.5";
 
 function configDirectory() {
   if (process.env.QA_REPORT_AGENT_CONFIG_DIR) return path.resolve(process.env.QA_REPORT_AGENT_CONFIG_DIR);
@@ -80,11 +80,20 @@ function writeConfig(config) {
 }
 
 function tokenizeCurl(value) {
+  let source = String(value || "");
+  // Chrome and Edge on Windows copy commands for cmd.exe as `curl ^"...^"`.
+  // Decode cmd caret escapes before applying the regular shell-like tokenizer.
+  if (/\bcurl(?:\.exe)?\b[\s\S]*\^["']/i.test(source)) {
+    source = source
+      .replace(/\^(?:\r\n|\n|\r)/g, "")
+      .replace(/\^([\s\S])/g, "$1")
+      .replace(/\^\s*(?=\S)/g, "");
+  }
   const tokens = [];
   let current = "";
   let quote = "";
   let escaping = false;
-  for (const character of String(value || "")) {
+  for (const character of source) {
     if (escaping) {
       if (character !== "\n" && character !== "\r") current += character;
       escaping = false;
@@ -120,6 +129,7 @@ function parseCurlCredentials(command) {
   const tokens = tokenizeCurl(command);
   let rawUrl = "";
   let userToken = "";
+  let cookieToken = "";
   const headers = new Map();
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
@@ -131,6 +141,18 @@ function parseCurlCredentials(command) {
     } else if (["-u", "--user"].includes(token)) {
       userToken = next;
       index += 1;
+    } else if (["-b", "--cookie"].includes(token)) {
+      cookieToken = next;
+      index += 1;
+    } else if (token.startsWith("--cookie=")) {
+      cookieToken = token.slice("--cookie=".length);
+    } else if (token.startsWith("-b") && token.length > 2) {
+      cookieToken = token.slice(2);
+    } else if (token === "--url") {
+      rawUrl = next;
+      index += 1;
+    } else if (token.startsWith("--url=")) {
+      rawUrl = token.slice("--url=".length);
     } else if (/^https?:\/\//i.test(token)) {
       rawUrl = token;
     }
@@ -139,7 +161,7 @@ function parseCurlCredentials(command) {
   const baseUrl = jiraBaseFromUrl(rawUrl);
   const cloud = new URL(baseUrl).hostname.endsWith(".atlassian.net");
   const authorization = headers.get("authorization") || "";
-  const cookie = headers.get("cookie") || "";
+  const cookie = headers.get("cookie") || cookieToken;
   if (/^bearer\s+/i.test(authorization)) {
     return { baseUrl, type: "data-center", authMethod: "pat", token: authorization.replace(/^bearer\s+/i, "").trim(), user: "" };
   }
@@ -596,7 +618,11 @@ async function main() {
   await run(config);
 }
 
-main().catch((error) => {
-  console.error(`QA Report Agent: ${error.message}`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`QA Report Agent: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl };
