@@ -1,8 +1,8 @@
 {
   "name": "qr-report-agent",
-  "version": "0.3.2",
-  "description": "Графический агент QR Report для подключения к Jira",
-  "author": "QR Report",
+  "version": "0.3.3",
+  "description": "Графический агент QA Report для подключения к Jira",
+  "author": "QA Report",
   "private": true,
   "main": "desktop/main.js",
   "scripts": {
@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "app.qareport.agent",
-    "productName": "QR Report Agent",
+    "productName": "QA Report Agent",
     "directories": {
       "output": "dist"
     },
@@ -27,7 +27,7 @@
     ],
     "protocols": [
       {
-        "name": "QR Report Agent",
+        "name": "QA Report Agent",
         "schemes": [
           "qareport-agent"
         ]
@@ -77,7 +77,7 @@
         }
       ],
       "category": "Utility",
-      "maintainer": "QR Report",
+      "maintainer": "QA Report",
       "executableName": "qr-report-agent",
       "icon": "../icons/agent-512.png"
     }

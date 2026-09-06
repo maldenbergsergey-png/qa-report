@@ -69,7 +69,7 @@ function argument(name) {
 function normalizeServerUrl(value) {
   const url = new URL(String(value || "").trim());
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
-    throw new Error("Адрес QR Report должен начинаться с http:// или https://");
+    throw new Error("Адрес QA Report должен начинаться с http:// или https://");
   }
   url.hash = "";
   url.search = "";
@@ -341,7 +341,7 @@ async function pairAgent() {
   const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
     const initialServer = argument("--server") || process.env.QA_REPORT_SERVER_URL || "";
-    const serverUrl = normalizeServerUrl(initialServer || await terminal.question("Адрес QR Report: "));
+    const serverUrl = normalizeServerUrl(initialServer || await terminal.question("Адрес QA Report: "));
     const initialCode = argument("--pair-code") || "";
     const code = String(initialCode || await terminal.question("8-значный код подключения: ")).replace(/\D/g, "");
     const defaultName = `${os.hostname()} (${process.platform})`;
@@ -575,7 +575,7 @@ function abortableWait(ms, signal) {
 
 async function pairWithCode(server, code, name = `${os.hostname()} (${process.platform})`) {
   const serverUrl = normalizeServerUrl(server);
-  if (!/^\d{8}$/.test(String(code))) throw new Error("Код подключения недействителен. Откройте агент из QR Report ещё раз.");
+  if (!/^\d{8}$/.test(String(code))) throw new Error("Код подключения недействителен. Откройте агент из QA Report ещё раз.");
   const result = await fetchJson(`${serverUrl}/api/agent/pair`, {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(20_000),
     body: JSON.stringify({ code, name, platform: process.platform, version: VERSION }),
@@ -622,7 +622,7 @@ async function run(config, { signal, onStatus = () => {}, onPreferences = () => 
     } catch (error) {
       if (signal?.aborted) break;
       onStatus({ connected: false, message: errorMessage(error) });
-      console.error(`Связь с QR Report: ${errorMessage(error)}. Повтор через ${Math.round(failureDelay / 1000)} сек.`);
+      console.error(`Связь с QA Report: ${errorMessage(error)}. Повтор через ${Math.round(failureDelay / 1000)} сек.`);
       await abortableWait(failureDelay, signal);
       failureDelay = Math.min(failureDelay * 2, 30_000);
     }
@@ -636,7 +636,7 @@ async function main() {
       try { fs.unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") throw error; }
     }
     console.log("Локальные настройки агента полностью удалены.");
-    console.log("Запустите start ещё раз и введите новый адрес QR Report и код подключения.");
+    console.log("Запустите start ещё раз и введите новый адрес QA Report и код подключения.");
     return;
   }
   let config = readConfig() || await pairAgent();

@@ -28,7 +28,7 @@ function emit(update = {}) {
 }
 function show() {
   if (!window) {
-    window = new BrowserWindow({ width: 600, height: 700, minWidth: 480, minHeight: 540, title: "QR Report Agent",
+    window = new BrowserWindow({ width: 600, height: 700, minWidth: 480, minHeight: 540, title: "QA Report Agent",
       webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     window.setMenuBarVisibility(false);
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -65,7 +65,7 @@ async function connectLink(raw) {
   show();
   const link = parseLink(raw);
   // An arbitrary website can open a registered protocol. Require local consent before rebinding.
-  const answer = await dialog.showMessageBox(window, { type: "question", title: "Подключить QR Report?",
+  const answer = await dialog.showMessageBox(window, { type: "question", title: "Подключить QA Report?",
     message: `Разрешить задания от ${link.serverUrl}?`,
     detail: config?.secret ? "Это заменит текущую привязку. Сохранённый доступ к Jira останется на этом компьютере." : "Агент будет выполнять запросы к настроенной вами Jira. Продолжайте, если вы только что нажали кнопку подключения на этом сайте.",
     buttons: ["Отмена", "Подключить"], defaultId: 0, cancelId: 0 });
@@ -101,8 +101,8 @@ else {
     nativeTheme.themeSource = config?.theme === "graphite" ? "dark" : config?.theme || "system";
     const icon = nativeImage.createFromPath(path.join(__dirname, "tray.png"));
     tray = new Tray(icon.resize({ width: 22, height: 22 }));
-    tray.setToolTip("QR Report Agent");
-    tray.setContextMenu(Menu.buildFromTemplate([{ label: "Открыть QR Report Agent", click: show },
+    tray.setToolTip("QA Report Agent");
+    tray.setContextMenu(Menu.buildFromTemplate([{ label: "Открыть QA Report Agent", click: show },
       { label: "Завершить работу агента", click: () => app.quit() }]));
     tray.on("click", show);
     function handle(name, action) {
@@ -114,7 +114,7 @@ else {
     }
     handle("state", snapshot);
     handle("save", (form) => exclusive(async () => {
-      if (!config?.secret) throw new Error("Сначала подключите агент кнопкой в QR Report");
+      if (!config?.secret) throw new Error("Сначала подключите агент кнопкой в QA Report");
       const jira = jiraFromForm(form);
       await core.verifyJira(jira);
       await stop();
@@ -135,5 +135,5 @@ else {
     });
     show(); start();
     enqueueLink(process.argv.find((arg) => arg.startsWith("qareport-agent:")));
-  }).catch((error) => { dialog.showErrorBox("QR Report Agent", core.errorMessage(error)); app.quit(); });
+  }).catch((error) => { dialog.showErrorBox("QA Report Agent", core.errorMessage(error)); app.quit(); });
 }

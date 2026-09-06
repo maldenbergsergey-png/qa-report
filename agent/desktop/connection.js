@@ -10,10 +10,10 @@ function parseLink(value) {
   const serverUrl = core.normalizeServerUrl(url.searchParams.get("server"));
   const server = new URL(serverUrl);
   if (server.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(server.hostname)) {
-    throw new Error("Для подключения к QR Report нужен HTTPS");
+    throw new Error("Для подключения к QA Report нужен HTTPS");
   }
   const code = url.searchParams.get("code") || "";
-  if (!/^\d{8}$/.test(code)) throw new Error("Ссылка устарела или повреждена. Нажмите «Подключить» в QR Report ещё раз.");
+  if (!/^\d{8}$/.test(code)) throw new Error("Ссылка устарела или повреждена. Нажмите «Подключить» в QA Report ещё раз.");
   const theme = url.searchParams.get("theme");
   return { serverUrl, code, ...(["light", "dark", "graphite"].includes(theme) ? { theme } : {}) };
 }

@@ -1,0 +1,26 @@
+{
+  "version": "0.3.3",
+  "baseUrl": "https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.3.3",
+  "files": [
+    {
+      "name": "qr-report-agent-mac-arm64.dmg",
+      "sha256": "4360764915a857fc7b5e7c6c7999ab99c7931387b1dfffc0849a2c595be9b441"
+    },
+    {
+      "name": "qr-report-agent-mac-x64.dmg",
+      "sha256": "36c7c0ad71d041cd6816980d90f7c4e603864427256255142e28659e0e95f993"
+    },
+    {
+      "name": "qr-report-agent-windows-setup.exe",
+      "sha256": "8df62314dd4af64ce06b5fc40703fd948b07cdccb44e481c4267274c6fd4cde4"
+    },
+    {
+      "name": "qr-report-agent-linux-amd64.deb",
+      "sha256": "6e5a9c2dac66691da4801d2123a19bcb14b0690cb988d0b1db12c16adbe34963"
+    },
+    {
+      "name": "qr-report-agent-linux-arm64.deb",
+      "sha256": "b93a7535b3d2a7defc2af4aa8a3852797065e353b3b9b5c8f55f696dc57087ac"
+    }
+  ]
+}

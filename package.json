@@ -4,7 +4,8 @@
   "version": "0.4.0",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check app.js && node --check server.js && node --check jira-markup-import.js && node --check checklist-selection.js && node --check checklist-numbering.js && node --check release-notes.js && node --check pwa.js && node --check sw.js && node --check agent/qa-report-agent.js && node --check agent/desktop/main.js && node --check agent/desktop/preload.js && node --check agent/desktop/renderer.js && node --check agent/desktop/connection.js",
-    "test": "node --test tests/*.test.js"
+    "check": "node --check app.js && node --check server.js && node --check jira-markup-import.js && node --check checklist-selection.js && node --check checklist-numbering.js && node --check release-notes.js && node --check pwa.js && node --check sw.js && node --check agent/qa-report-agent.js && node --check agent/desktop/main.js && node --check agent/desktop/preload.js && node --check agent/desktop/renderer.js && node --check agent/desktop/connection.js && node --check scripts/fetch-agent-release.js",
+    "test": "node --test tests/*.test.js",
+    "agent:download": "node scripts/fetch-agent-release.js"
   }
 }
