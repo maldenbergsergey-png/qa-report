@@ -95,16 +95,38 @@ async function main() {
   });
   await new Promise((resolve) => mock.listen(4199, "127.0.0.1", resolve));
 
+  // Reserve a free port rather than sending test requests to an existing preview.
+  const portProbe = http.createServer();
+  await new Promise((resolve, reject) => {
+    portProbe.once("error", reject);
+    portProbe.listen(0, "127.0.0.1", resolve);
+  });
+  const appPort = portProbe.address().port;
+  await new Promise((resolve) => portProbe.close(resolve));
+  const appOrigin = `http://127.0.0.1:${appPort}`;
   const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-report-test-"));
   const app = spawn(process.execPath, ["server.js"], {
     cwd: process.cwd(),
-    env: { ...process.env, PORT: "4174", REPORTS_DB_PATH: path.join(testDir, "reports.sqlite") },
-    stdio: "ignore",
+    env: { ...process.env, HOST: "127.0.0.1", PORT: String(appPort), REPORTS_DB_PATH: path.join(testDir, "reports.sqlite") },
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  await new Promise((resolve) => setTimeout(resolve, 250));
 
   try {
-    const testResponse = await fetch("http://127.0.0.1:4174/api/jira/test", {
+    // Proceed only after this child has bound its port, never just after a delay.
+    await new Promise((resolve, reject) => {
+      let output = "";
+      let errors = "";
+      const timeout = setTimeout(() => reject(new Error("Test server startup timed out")), 5000);
+      const cleanup = () => clearTimeout(timeout);
+      app.once("error", (error) => { cleanup(); reject(error); });
+      app.once("exit", (code) => { cleanup(); reject(new Error(`Test server exited (${code}): ${errors}`)); });
+      app.stderr.on("data", (chunk) => { errors += chunk; });
+      app.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (output.includes(`QA Report: ${appOrigin}`)) { cleanup(); resolve(); }
+      });
+    });
+    const testResponse = await fetch(`${appOrigin}/api/jira/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -116,7 +138,7 @@ async function main() {
     assert.equal(testResponse.status, 200);
     assert.equal((await testResponse.json()).displayName, "QA Tester");
 
-    const commentResponse = await fetch("http://127.0.0.1:4174/api/jira/comment", {
+    const commentResponse = await fetch(`${appOrigin}/api/jira/comment`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -144,7 +166,7 @@ async function main() {
     assert.match(cloudCommentRequest.authorization, /^Basic /);
     assert.equal(cloudCommentRequest.body.body.type, "doc");
 
-    const basicResponse = await fetch("http://127.0.0.1:4174/api/jira/test", {
+    const basicResponse = await fetch(`${appOrigin}/api/jira/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -164,7 +186,7 @@ async function main() {
       `Basic ${Buffer.from("legacy-user:legacy-password").toString("base64")}`,
     );
 
-    const cookieResponse = await fetch("http://127.0.0.1:4174/api/jira/test", {
+    const cookieResponse = await fetch(`${appOrigin}/api/jira/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -181,7 +203,7 @@ async function main() {
     assert.equal(cookieTestRequest.authorization, undefined);
     assert.equal(cookieTestRequest.cookie, "JSESSIONID=session-from-curl; atlassian.xsrf.token=xsrf");
 
-    const fallbackResponse = await fetch("http://127.0.0.1:4174/api/jira/comment", {
+    const fallbackResponse = await fetch(`${appOrigin}/api/jira/comment`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -198,7 +220,7 @@ async function main() {
     assert.equal(fallbackResult.commentId, "20002");
     assert.equal(fallbackResult.verificationSource, "comments-body-match");
 
-    const diagnosticResponse = await fetch("http://127.0.0.1:4174/api/jira/comment", {
+    const diagnosticResponse = await fetch(`${appOrigin}/api/jira/comment`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -215,7 +237,7 @@ async function main() {
     assert.match(diagnosticResult.error, /комментариев до: 0/);
     assert.match(diagnosticResult.error, /после: 0/);
 
-    const wafResponse = await fetch("http://127.0.0.1:4174/api/jira/comment", {
+    const wafResponse = await fetch(`${appOrigin}/api/jira/comment`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -232,7 +254,7 @@ async function main() {
     assert.match(wafResult.error, /\/rest\/api\/\*/);
     assert.equal(wafPostAttempted, false);
 
-    const importResponse = await fetch("http://127.0.0.1:4174/api/jira/import-comment", {
+    const importResponse = await fetch(`${appOrigin}/api/jira/import-comment`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -247,7 +269,7 @@ async function main() {
     assert.equal((await importResponse.json()).format, "adf");
 
     const tinyPng = Buffer.from("iVBORw0KGgo=", "base64").toString("base64");
-    const attachmentResponse = await fetch("http://127.0.0.1:4174/api/jira/attachments", {
+    const attachmentResponse = await fetch(`${appOrigin}/api/jira/attachments`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -279,7 +301,7 @@ async function main() {
       intro: "",
       sections: [{ id: "s1", title: "Раздел", columns: [], rows: [] }],
     };
-    const saveReportResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const saveReportResponse = await fetch(`${appOrigin}/api/reports`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -292,19 +314,19 @@ async function main() {
     assert.equal(saveReportResult.report.ownerSource, "browser");
     assert.equal(saveReportResult.report.issueKey, "QA-321");
 
-    const ownReportsResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const ownReportsResponse = await fetch(`${appOrigin}/api/reports`, {
       headers: { "X-QA-Report-Client-Id": "browser-a" },
     });
     assert.equal(ownReportsResponse.status, 200);
     assert.equal((await ownReportsResponse.json()).reports.length, 1);
 
-    const otherReportsResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const otherReportsResponse = await fetch(`${appOrigin}/api/reports`, {
       headers: { "X-QA-Report-Client-Id": "browser-b" },
     });
     assert.equal(otherReportsResponse.status, 200);
     assert.equal((await otherReportsResponse.json()).reports.length, 0);
 
-    const sharedReportResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const sharedReportResponse = await fetch(`${appOrigin}/api/reports`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -319,7 +341,7 @@ async function main() {
     assert.equal(sharedReportResponse.status, 200);
     assert.equal((await sharedReportResponse.json()).report.ownerSource, "workspace-key");
 
-    const sharedReportsResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const sharedReportsResponse = await fetch(`${appOrigin}/api/reports`, {
       headers: {
         "X-QA-Report-Client-Id": "browser-c",
         "X-QA-Report-Workspace-Key": "qa-team",
@@ -330,7 +352,7 @@ async function main() {
     assert.equal(sharedReports.reports.length, 1);
     assert.equal(sharedReports.reports[0].title, "Shared report");
 
-    const fullReportResponse = await fetch("http://127.0.0.1:4174/api/reports/server-report-shared", {
+    const fullReportResponse = await fetch(`${appOrigin}/api/reports/server-report-shared`, {
       headers: {
         "X-QA-Report-Client-Id": "browser-c",
         "X-QA-Report-Workspace-Key": "qa-team",
@@ -341,7 +363,7 @@ async function main() {
     assert.equal(fullReport.report.document.reportId, "server-report-shared");
     assert.ok(fullReport.report.contentHash);
 
-    const updatedSharedResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const updatedSharedResponse = await fetch(`${appOrigin}/api/reports`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -362,7 +384,7 @@ async function main() {
     const updatedShared = await updatedSharedResponse.json();
     assert.notEqual(updatedShared.report.contentHash, fullReport.report.contentHash);
 
-    const staleSharedResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const staleSharedResponse = await fetch(`${appOrigin}/api/reports`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -384,7 +406,7 @@ async function main() {
     assert.equal(staleConflict.conflict, true);
     assert.equal(staleConflict.report.title, "Shared report updated");
 
-    const forcedSharedResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const forcedSharedResponse = await fetch(`${appOrigin}/api/reports`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -405,7 +427,7 @@ async function main() {
     assert.equal(forcedSharedResponse.status, 200);
     assert.equal((await forcedSharedResponse.json()).report.title, "Forced local version");
 
-    const checklistImportResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+    const checklistImportResponse = await fetch(`${appOrigin}/api/checklists/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -422,11 +444,13 @@ async function main() {
     const checklistImportResult = await checklistImportResponse.json();
     assert.equal(checklistImportResult.ok, true);
     assert.match(checklistImportResult.checklistId, /^[0-9a-f-]{36}$/);
-    assert.match(checklistImportResult.url, /^http:\/\/127\.0\.0\.1:4174\/report\/[a-f0-9]{8}\?/);
+    assert.equal(new URL(checklistImportResult.url).origin, appOrigin);
+    assert.match(new URL(checklistImportResult.url).pathname, /^\/report\/[a-f0-9]{8}$/);
+    assert.ok(new URL(checklistImportResult.url).searchParams.has("importToken"));
     assert.match(checklistImportResult.url, /\?importToken=/);
     assert.equal(checklistImportResult.parsed.rows, 1);
 
-    const proxiedChecklistImportResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+    const proxiedChecklistImportResponse = await fetch(`${appOrigin}/api/checklists/import`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -448,7 +472,7 @@ async function main() {
     );
 
     const checklistPayloadResponse = await fetch(
-      `http://127.0.0.1:4174/api/checklists/import/${checklistImportResult.checklistId}`,
+      `${appOrigin}/api/checklists/import/${checklistImportResult.checklistId}`,
     );
     assert.equal(checklistPayloadResponse.status, 200);
     const checklistPayload = await checklistPayloadResponse.json();
@@ -457,7 +481,7 @@ async function main() {
     assert.equal(checklistPayload.issueKey, "https://company.atlassian.net/browse/ADVINTAUT2-117");
     assert.equal(checklistPayload.content.includes("Отображение кнопки Export"), true);
 
-    const heavyReportResponse = await fetch("http://127.0.0.1:4174/api/reports", {
+    const heavyReportResponse = await fetch(`${appOrigin}/api/reports`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -489,7 +513,7 @@ async function main() {
       }),
     });
     assert.equal(heavyReportResponse.status, 200);
-    const heavyReportGetResponse = await fetch("http://127.0.0.1:4174/api/reports/server-report-heavy", {
+    const heavyReportGetResponse = await fetch(`${appOrigin}/api/reports/server-report-heavy`, {
       headers: { "X-QA-Report-Client-Id": "browser-heavy" },
     });
     assert.equal(heavyReportGetResponse.status, 200);
@@ -498,21 +522,21 @@ async function main() {
     assert.equal(JSON.stringify(heavyReport.report.document).includes("cell-file"), false);
     assert.equal(heavyReport.report.document.intro.includes("Текст до"), true);
 
-    const unsupportedFormatResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+    const unsupportedFormatResponse = await fetch(`${appOrigin}/api/checklists/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ format: "markdown", content: "| nope |" }),
     });
     assert.equal(unsupportedFormatResponse.status, 400);
 
-    const emptyContentResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+    const emptyContentResponse = await fetch(`${appOrigin}/api/checklists/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ format: "jira", content: "" }),
     });
     assert.equal(emptyContentResponse.status, 400);
 
-    const unparseableResponse = await fetch("http://127.0.0.1:4174/api/checklists/import", {
+    const unparseableResponse = await fetch(`${appOrigin}/api/checklists/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ format: "jira", content: "Просто текст без таблицы" }),

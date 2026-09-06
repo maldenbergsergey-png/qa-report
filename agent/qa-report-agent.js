@@ -9,7 +9,20 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const tls = require("node:tls");
 
-const VERSION = "0.2.5";
+const VERSION = "0.2.6";
+
+function errorMessage(error) {
+  const parts = [];
+  let current = error;
+  while (current) {
+    const message = String(current.message || "").trim();
+    const code = String(current.code || "").trim();
+    const detail = code && !message.includes(code) ? `${message || "Ошибка сети"} (${code})` : message || code;
+    if (detail && !parts.includes(detail)) parts.push(detail);
+    current = current.cause;
+  }
+  return parts.join(": ") || "Неизвестная ошибка";
+}
 
 function configDirectory() {
   if (process.env.QA_REPORT_AGENT_CONFIG_DIR) return path.resolve(process.env.QA_REPORT_AGENT_CONFIG_DIR);
@@ -584,7 +597,7 @@ async function run(config) {
         console.error(`Ошибка задания: ${error.message}`);
       }
     } catch (error) {
-      console.error(`Связь с QR Report: ${error.message}. Повтор через ${Math.round(failureDelay / 1000)} сек.`);
+      console.error(`Связь с QR Report: ${errorMessage(error)}. Повтор через ${Math.round(failureDelay / 1000)} сек.`);
       await wait(failureDelay);
       failureDelay = Math.min(failureDelay * 2, 30_000);
     }
@@ -620,7 +633,7 @@ async function main() {
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error(`QA Report Agent: ${error.message}`);
+    console.error(`QA Report Agent: ${errorMessage(error)}`);
     process.exitCode = 1;
   });
 }

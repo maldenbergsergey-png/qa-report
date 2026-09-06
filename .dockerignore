@@ -13,3 +13,5 @@ secrets
 *.pdf
 *.png
 ПЛАН_РЕДАКТОРА_ЧЕК_ЛИСТОВ.md
+
+!icons/*.png

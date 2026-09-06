@@ -8,6 +8,10 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem Trust corporate certificates installed in the Windows certificate store.
+rem Older Node.js versions safely ignore this environment variable.
+set "NODE_USE_SYSTEM_CA=1"
+
 node "%~dp0qa-report-agent.js"
 set "agentExitCode=%errorlevel%"
 
