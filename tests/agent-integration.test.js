@@ -72,7 +72,10 @@ test("local agent pairing, restricted job and result flow", async (context) => {
   const catalog = await fetch(`${ORIGIN}/api/agent/downloads`).then((response) => response.json());
   assert.equal(catalog.downloads.length, 5);
   for (const item of catalog.downloads) {
-    assert.equal(item.available, fs.existsSync(path.join(__dirname, "..", item.url)));
+    assert.equal(item.available, true);
+    const downloadUrl = new URL(item.url);
+    assert.equal(downloadUrl.origin, "https://drive.google.com");
+    assert.match(downloadUrl.pathname, /^\/file\/d\/[A-Za-z0-9_-]+\/view$/);
   }
 
   const preferenceUpdate = await fetch(`${ORIGIN}/api/agent/preferences`, {
