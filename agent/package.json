@@ -1,0 +1,86 @@
+{
+  "name": "qr-report-agent",
+  "version": "0.3.2",
+  "description": "Графический агент QR Report для подключения к Jira",
+  "author": "QR Report",
+  "private": true,
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "app.qareport.agent",
+    "productName": "QR Report Agent",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/**/*",
+      "qa-report-agent.js",
+      "package.json"
+    ],
+    "protocols": [
+      {
+        "name": "QR Report Agent",
+        "schemes": [
+          "qareport-agent"
+        ]
+      }
+    ],
+    "artifactName": "qr-report-agent-${os}-${arch}.${ext}",
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "../icons/agent-512.png"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "../icons/agent-512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
+      "artifactName": "qr-report-agent-windows-setup.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "maintainer": "QR Report",
+      "executableName": "qr-report-agent",
+      "icon": "../icons/agent-512.png"
+    }
+  },
+  "homepage": "https://github.com/maldenbergsergey-png/qa-report"
+}

@@ -20,3 +20,8 @@ build
 
 .vscode
 .idea
+
+# Graphical agent release artifacts are delivered separately from source.
+downloads/qr-report-agent-*.dmg
+downloads/qr-report-agent-*.exe
+downloads/qr-report-agent-*.deb

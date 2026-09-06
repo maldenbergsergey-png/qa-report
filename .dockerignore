@@ -15,3 +15,6 @@ secrets
 ПЛАН_РЕДАКТОРА_ЧЕК_ЛИСТОВ.md
 
 !icons/*.png
+
+agent/node_modules
+agent/dist

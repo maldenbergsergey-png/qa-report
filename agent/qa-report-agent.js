@@ -391,7 +391,7 @@ function configuredJira(config, payload) {
     error.status = 401;
     throw error;
   }
-  const requested = jiraBaseFromUrl(payload.baseUrl || payload.issueUrl || payload.commentUrl || config.jira.baseUrl);
+  const requested = jiraBaseFromUrl(payload.issueUrl || payload.commentUrl || payload.baseUrl || config.jira.baseUrl);
   if (new URL(requested).origin !== new URL(config.jira.baseUrl).origin) {
     const error = new Error("Задание запрашивает другую Jira, не разрешённую в локальном агенте");
     error.status = 403;
@@ -564,22 +564,45 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function run(config) {
+function abortableWait(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => { clearTimeout(timer); signal?.removeEventListener("abort", done); resolve(); };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+async function pairWithCode(server, code, name = `${os.hostname()} (${process.platform})`) {
+  const serverUrl = normalizeServerUrl(server);
+  if (!/^\d{8}$/.test(String(code))) throw new Error("Код подключения недействителен. Откройте агент из QR Report ещё раз.");
+  const result = await fetchJson(`${serverUrl}/api/agent/pair`, {
+    method: "POST", redirect: "error", signal: AbortSignal.timeout(20_000),
+    body: JSON.stringify({ code, name, platform: process.platform, version: VERSION }),
+  });
+  if (!result.deviceId || !result.secret) throw new Error("Сервер не вернул ключ подключения");
+  return { serverUrl, deviceId: result.deviceId, secret: result.secret, name };
+}
+
+async function run(config, { signal, onStatus = () => {}, onPreferences = () => {}, version = VERSION } = {}) {
   console.log(`QA Report Agent ${VERSION}`);
   console.log(`Устройство: ${config.name}`);
   console.log(`Сервер: ${config.serverUrl}`);
   console.log("Агент подключён. Оставьте это окно открытым; Ctrl+C — остановить.\n");
   let failureDelay = 2000;
-  while (true) {
+  while (!signal?.aborted) {
     try {
       const response = await fetchJson(`${config.serverUrl}/api/agent/poll`, {
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
         method: "POST",
         headers: { Authorization: agentAuthorization(config) },
-        body: JSON.stringify({ version: VERSION }),
+        body: JSON.stringify({ version, ...(config.desktop ? { jiraBaseUrl: config.jira?.baseUrl || "" } : {}) }),
       });
       failureDelay = 2000;
+      onPreferences(response.preferences || {});
+      onStatus({ connected: true, message: "Подключён" });
       if (!response.job) {
-        await wait(response.pollAfterMs || 2500);
+        await abortableWait(response.pollAfterMs || 2500, signal);
         continue;
       }
       const job = response.job;
@@ -597,8 +620,10 @@ async function run(config) {
         console.error(`Ошибка задания: ${error.message}`);
       }
     } catch (error) {
+      if (signal?.aborted) break;
+      onStatus({ connected: false, message: errorMessage(error) });
       console.error(`Связь с QR Report: ${errorMessage(error)}. Повтор через ${Math.round(failureDelay / 1000)} сек.`);
-      await wait(failureDelay);
+      await abortableWait(failureDelay, signal);
       failureDelay = Math.min(failureDelay * 2, 30_000);
     }
   }
@@ -638,4 +663,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl };
+module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl, normalizeServerUrl,
+  configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };

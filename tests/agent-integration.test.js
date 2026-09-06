@@ -61,12 +61,31 @@ test("local agent pairing, restricted job and result flow", async (context) => {
   await fetch(`${ORIGIN}/api/agent/poll`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: authorization },
-    body: JSON.stringify({ version: "0.2.1" }),
+    body: JSON.stringify({ version: "0.2.1", jiraBaseUrl: "https://jira.example.test" }),
   });
   const status = await fetch(`${ORIGIN}/api/agent/status`, { headers: OWNER_HEADERS }).then((response) => response.json());
   assert.equal(status.connected, true);
   assert.equal(status.devices[0].name, "Test device");
   assert.equal(status.devices[0].version, "0.2.1");
+  assert.equal(status.devices[0].jiraBaseUrl, "https://jira.example.test");
+  assert.equal(status.devices[0].secret, undefined);
+  const catalog = await fetch(`${ORIGIN}/api/agent/downloads`).then((response) => response.json());
+  assert.equal(catalog.downloads.length, 5);
+  for (const item of catalog.downloads) {
+    assert.equal(item.available, fs.existsSync(path.join(__dirname, "..", item.url)));
+  }
+
+  const preferenceUpdate = await fetch(`${ORIGIN}/api/agent/preferences`, {
+    method: "POST", headers: OWNER_HEADERS, body: JSON.stringify({ theme: "dark" }),
+  });
+  assert.equal(preferenceUpdate.status, 200);
+  await fetch(`${ORIGIN}/api/agent/preferences`, {
+    method: "POST", headers: { ...OWNER_HEADERS, "X-QA-Report-Client-Id": "another-browser" }, body: JSON.stringify({ theme: "light" }),
+  });
+  const preferences = await fetch(`${ORIGIN}/api/agent/poll`, {
+    method: "POST", headers: { "Content-Type": "application/json", Authorization: authorization }, body: "{}",
+  }).then((response) => response.json());
+  assert.equal(preferences.preferences.theme, "dark");
 
   const forbiddenJob = await fetch(`${ORIGIN}/api/agent/jobs`, {
     method: "POST",

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>QR Report Agent</title><link rel="stylesheet" href="styles.css"></head>
+<body><main>
+<header><img src="tray.png" width="40" height="40" alt=""><h1>QR Report Agent</h1><span id="version"></span></header>
+<div class="notice" id="status" role="status" aria-live="polite">Подключаемся…</div>
+<p id="pairing" class="muted">Откройте агент из настроек приложения.</p>
+<section><h2>Jira</h2><p id="saved" hidden></p>
+<button id="edit" class="secondary" type="button" hidden>Изменить доступ</button>
+<form id="settings"><label>Способ входа<select id="mode"><option value="pat">Personal Access Token</option><option value="basic">Логин и пароль / API token</option><option value="curl">SSO / 2FA — Copy as cURL</option></select></label>
+<div id="manual"><label>Адрес Jira<input id="baseUrl" type="url" placeholder="https://jira.company.ru" autocomplete="url"></label><label id="userField" hidden>Логин / email Atlassian<input id="user" autocomplete="username"></label><label><span id="tokenLabel">Personal Access Token</span><input id="token" type="password" autocomplete="off" placeholder="Вставьте токен"></label></div>
+<div id="curlFields" hidden><p class="muted">В Jira: DevTools → Network → запрос → Copy as cURL. Вставьте ниже.</p><label>Запрос из Jira<textarea id="curl" rows="4" spellcheck="false" autocomplete="off" placeholder="curl 'https://jira…' …"></textarea></label></div>
+<p class="muted">Данные входа остаются на компьютере.</p>
+<button id="save" type="submit">Сохранить и проверить</button></form></section>
+<button id="test" type="button" disabled>Проверить Jira</button>
+<label class="check" id="autoStartField"><input type="checkbox" id="autoStart"> Запускать при входе в систему</label>
+<p class="muted">При закрытии окна агент продолжает работать.</p>
+<div id="result" role="status" aria-live="polite"></div>
+</main><script src="renderer.js"></script></body></html>

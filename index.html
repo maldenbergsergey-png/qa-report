@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="/icons/icon-192.png?v=2" />
     <script src="/pwa.js?v=2" defer></script>
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=80" />
+    <link rel="stylesheet" href="/styles.css?v=82" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -900,11 +900,29 @@
           <button class="icon-button" id="closeAgentSetupButton" type="button" aria-label="Закрыть">×</button>
         </header>
         <div class="agent-setup-body">
-          <div class="agent-guide-intro">
-            <strong>Агент позволяет QR Report работать с Jira через VPN вашего компьютера.</strong>
-            <span>Пройдите 4 шага. Терминал должен оставаться открытым во время публикации.</span>
+          <section class="agent-desktop-setup">
+            <div class="agent-brand"><span class="brand-mark" aria-hidden="true"></span><strong>Report <span>Agent</span></strong></div>
+            <div class="agent-install-row"><span class="agent-step-label">Установка</span><div id="desktopAgentDownloads" aria-live="polite">Загрузка…</div></div>
+            <p class="agent-short-hint">Скачайте и установите один раз. Если агент уже установлен, переходите к подключению.</p>
+            <div class="agent-install-row"><span class="agent-step-label">Подключение</span><div class="agent-pairing-actions">
+              <button class="button button-primary" id="prepareDesktopAgentButton" type="button">Подключить</button>
+              <a class="button button-primary" id="launchDesktopAgentLink" hidden>Открыть агент</a>
+            </div></div>
+            <p id="desktopAgentHint" class="agent-short-hint" aria-live="polite">Кнопка откроет установленный агент для настройки Jira.</p>
+          </section>
+          <div class="agent-connection-state" id="agentConnectionState" aria-live="polite">
+            <span class="agent-state-dot"></span>
+            <div><strong>Агент не подключён</strong><small>Создайте код и запустите агент на устройстве.</small></div>
+          </div>
+          <div class="agent-test-row">
+            <label class="field">
+              <span>Адрес Jira</span>
+              <input id="agentJiraUrl" type="url" placeholder="https://jira.company.local" />
+            </label>
+            <button class="button button-secondary" id="testAgentJiraButton" type="button" disabled>Проверить Jira</button>
           </div>
 
+          <details class="agent-manual-setup"><summary>Ручная установка</summary>
           <section class="agent-guide-section">
             <div class="agent-guide-heading"><span>1</span><div><strong>Установите и запустите агент</strong><small>Откройте инструкцию для своей операционной системы.</small></div></div>
             <div class="agent-platform-list">
@@ -960,10 +978,7 @@ chmod +x start.sh
             <div class="agent-pairing-actions"><button class="button button-secondary" id="copyAgentPairingCodeButton" type="button" data-agent-copy-target="agentPairingCode" disabled>Скопировать</button><button class="button button-primary" id="createAgentPairingButton" type="button">Создать код</button></div>
           </div>
           <div class="agent-copy-field"><label class="field"><span>Адрес QR Report для агента</span><input id="agentServerUrl" type="url" readonly value="" /></label><button class="button button-secondary" type="button" data-agent-copy-target="agentServerUrl">Скопировать</button></div>
-          <div class="agent-connection-state" id="agentConnectionState" aria-live="polite">
-            <span class="agent-state-dot"></span>
-            <div><strong>Агент не подключён</strong><small>Создайте код и запустите агент на устройстве.</small></div>
-          </div>
+
           </section>
 
           <section class="agent-guide-section">
@@ -974,14 +989,7 @@ chmod +x start.sh
           </section>
 
           <section class="agent-guide-section">
-            <div class="agent-guide-heading"><span>4</span><div><strong>Проверьте и начните работу</strong><small>Убедитесь, что VPN включён, а окно агента остаётся открытым.</small></div></div>
-          <div class="agent-test-row">
-            <label class="field">
-              <span>Адрес Jira</span>
-              <input id="agentJiraUrl" type="url" placeholder="https://jira.company.local" />
-            </label>
-            <button class="button button-secondary" id="testAgentJiraButton" type="button" disabled>Проверить через агент</button>
-          </div>
+            <div class="agent-guide-heading"><span>4</span><div><strong>Проверьте и начните работу</strong><small>Убедитесь, что VPN включён, а окно агента остаётся открытым. Проверка подключения доступна выше.</small></div></div>
           </section>
           <div class="agent-reset-wrap"><details class="agent-reset-card agent-troubleshooting-card">
             <summary><span><strong>Распространённые проблемы</strong><small>Что проверить, если агент не запускается или не подключается</small></span><span class="agent-summary-chevron">›</span></summary>
@@ -1007,12 +1015,9 @@ chmod +x start.sh
               <p>Команда удалит привязку к QR Report, Jira credential и локальный TLS-CA. Сам агент и архив не удаляются.</p>
             </div>
           </details></div>
-          <p class="agent-security-note"><strong>Безопасность.</strong> Jira credential хранится только в локальном файле агента с ограниченными правами и не отправляется серверу QR Report.</p>
+          </details>
+          <p class="agent-short-hint">Данные входа хранятся на компьютере.</p>
         </div>
-        <footer class="modal-footer">
-          <span class="agent-version-label">Local Agent 0.2.6</span>
-          <button class="button button-secondary" id="closeAgentSetupFooterButton" type="button">Закрыть</button>
-        </footer>
       </section>
     </div>
 
@@ -1117,6 +1122,6 @@ chmod +x start.sh
     <script src="/checklist-selection.js?v=2"></script>
     <script src="/checklist-numbering.js?v=2"></script>
     <script src="/release-notes.js?v=1"></script>
-    <script src="/app.js?v=84"></script>
+    <script src="/app.js?v=88"></script>
   </body>
 </html>

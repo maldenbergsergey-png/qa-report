@@ -224,6 +224,9 @@ function getReportsDb() {
     CREATE INDEX IF NOT EXISTS idx_agent_jobs_device
       ON agent_jobs(device_id, status, created_at);
   `);
+  const agentColumns = reportsDb.prepare("PRAGMA table_info(agent_devices)").all().map((column) => column.name);
+  if (!agentColumns.includes("jira_base_url")) reportsDb.exec("ALTER TABLE agent_devices ADD COLUMN jira_base_url TEXT NOT NULL DEFAULT ''");
+  if (!agentColumns.includes("theme")) reportsDb.exec("ALTER TABLE agent_devices ADD COLUMN theme TEXT NOT NULL DEFAULT 'system'");
   const columns = reportsDb.prepare("PRAGMA table_info(reports)").all().map((column) => column.name);
   if (!columns.includes("content_hash")) {
     reportsDb.exec("ALTER TABLE reports ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''");
@@ -386,6 +389,7 @@ function agentPublicRecord(row) {
     version: row.version,
     createdAt: row.created_at,
     lastSeenAt,
+    jiraBaseUrl: row.jira_base_url || "",
     online: Boolean(lastSeenAt && Date.now() - Date.parse(lastSeenAt) < 45_000),
   };
 }
@@ -612,6 +616,15 @@ async function handleAgentPoll(request, response) {
   const body = await readJson(request);
   const db = getReportsDb();
   cleanupAgentRecords(db);
+  if (Object.hasOwn(body, "jiraBaseUrl")) {
+    let jiraBaseUrl = "";
+    if (body.jiraBaseUrl) {
+      const url = new URL(String(body.jiraBaseUrl));
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error("Некорректный адрес Jira");
+      jiraBaseUrl = url.toString().replace(/\/$/, "").slice(0, 2000);
+    }
+    db.prepare("UPDATE agent_devices SET jira_base_url = ? WHERE id = ?").run(jiraBaseUrl, device.id);
+  }
   const reportedVersion = normalizeIdentityPart(body.version, "").slice(0, 30);
   if (reportedVersion && reportedVersion !== device.version) {
     db.prepare("UPDATE agent_devices SET version = ? WHERE id = ?").run(reportedVersion, device.id);
@@ -622,12 +635,13 @@ async function handleAgentPoll(request, response) {
     ORDER BY created_at ASC LIMIT 1
   `).get(device.id);
   if (!job) {
-    sendJson(response, 200, { job: null, pollAfterMs: 2500 });
+    sendJson(response, 200, { job: null, pollAfterMs: 2500, preferences: { theme: device.theme } });
     return;
   }
   const now = new Date().toISOString();
   db.prepare("UPDATE agent_jobs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'queued'").run(now, job.id);
   sendJson(response, 200, {
+    preferences: { theme: device.theme },
     job: { id: job.id, type: job.type, payload: JSON.parse(job.payload_json) },
   });
 }
@@ -1846,6 +1860,19 @@ function serveStatic(request, response) {
     response.end("Forbidden");
     return;
   }
+  if (/^downloads\/qr-report-agent-[a-z0-9-]+\.(dmg|exe|deb)$/.test(relative)) {
+    fs.stat(filePath, (error, info) => {
+      if (error || !info.isFile()) { response.writeHead(404); response.end("Not found"); return; }
+      response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": info.size,
+        "Content-Disposition": `attachment; filename="${path.basename(filePath)}"`, "Cache-Control": "no-cache" });
+      if (request.method === "HEAD") { response.end(); return; }
+      const stream = fs.createReadStream(filePath);
+      stream.on("error", () => response.destroy());
+      response.on("close", () => stream.destroy());
+      stream.pipe(response);
+    });
+    return;
+  }
   fs.readFile(filePath, (error, data) => {
     if (error) {
       response.writeHead(error.code === "ENOENT" ? 404 : 500);
@@ -1863,6 +1890,28 @@ function serveStatic(request, response) {
 const server = http.createServer(async (request, response) => {
   try {
     const requestPath = new URL(request.url, "http://localhost").pathname;
+    if (request.method === "POST" && requestPath === "/api/agent/preferences") {
+      const owner = resolveReportOwner(request);
+      const body = await readJson(request);
+      if (!["light", "dark", "graphite"].includes(body.theme)) throw new Error("Неизвестная тема");
+      getReportsDb().prepare("UPDATE agent_devices SET theme = ? WHERE owner_source = ? AND owner_id = ? AND revoked_at = ''")
+        .run(body.theme, owner.source, owner.id);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+    if (request.method === "GET" && requestPath === "/api/agent/downloads") {
+      const candidates = [
+        ["mac-arm64", "macOS · Apple Silicon", "qr-report-agent-mac-arm64.dmg"],
+        ["mac-x64", "macOS · Intel", "qr-report-agent-mac-x64.dmg"],
+        ["windows", "Windows · x64 / ARM64", "qr-report-agent-windows-setup.exe"],
+        ["linux-x64", "Linux · Debian / Ubuntu x64", "qr-report-agent-linux-amd64.deb"],
+        ["linux-arm64", "Linux · Debian / Ubuntu ARM64", "qr-report-agent-linux-arm64.deb"],
+      ];
+      sendJson(response, 200, { downloads: candidates.map(([platform, label, filename]) => ({
+        platform, label, url: `/downloads/${filename}`, available: fs.existsSync(path.join(ROOT, "downloads", filename)),
+      })) });
+      return;
+    }
     if (request.method === "GET" && requestPath === "/api/health") {
       sendJson(response, 200, { ok: true, service: "qa-report" });
       return;

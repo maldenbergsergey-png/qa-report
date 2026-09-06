@@ -189,7 +189,6 @@ const elements = {
   openAgentSetupButton: document.querySelector("#openAgentSetupButton"),
   agentSetupModal: document.querySelector("#agentSetupModal"),
   closeAgentSetupButton: document.querySelector("#closeAgentSetupButton"),
-  closeAgentSetupFooterButton: document.querySelector("#closeAgentSetupFooterButton"),
   createAgentPairingButton: document.querySelector("#createAgentPairingButton"),
   copyAgentPairingCodeButton: document.querySelector("#copyAgentPairingCodeButton"),
   agentPairingCode: document.querySelector("#agentPairingCode"),
@@ -4477,6 +4476,16 @@ async function publishToJira() {
         localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
       }
     }
+    if (settings.transport === "agent") {
+      // The report target is authoritative; saved settings may belong to a different Jira.
+      const target = new URL(issue.issueUrl);
+      target.pathname = target.pathname.slice(0, target.pathname.toLowerCase().indexOf("/browse/"));
+      target.search = ""; target.hash = "";
+      settings.baseUrl = target.toString().replace(/\/$/, "");
+      settings.type = target.hostname.endsWith(".atlassian.net") ? "cloud" : "data-center";
+      jiraSettings = { ...settings };
+      localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
+    }
     validateJiraSettings(settings, jiraSecret);
     await checkBackendCompatibility();
     publishAbortController = new AbortController();
@@ -6745,8 +6754,14 @@ function showToast(message, duration = 2500) {
   toastTimer = setTimeout(() => elements.toast.classList.remove("visible"), duration);
 }
 
+async function syncAgentTheme(theme = document.documentElement.dataset.theme) {
+  try { await reportApi("/api/agent/preferences", { method: "POST", body: JSON.stringify({ theme }) }); }
+  catch { /* Older servers still support the existing pairing flow. */ }
+}
+
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
+  syncAgentTheme(theme);
   if (!elements.themeToggle) return;
   const iconMap = { light: "#icon-sun", graphite: "#icon-contrast", dark: "#icon-moon" };
   elements.themeToggle.querySelector(".theme-icon use")?.setAttribute(
@@ -6774,11 +6789,19 @@ async function refreshAgentStatus() {
     const result = await reportApi("/api/agent/status");
     const active = result.devices?.find((device) => device.online);
     if (active) {
+      if (active.jiraBaseUrl) {
+        elements.agentJiraUrl.value = active.jiraBaseUrl;
+        if (jiraSettings.baseUrl !== active.jiraBaseUrl || jiraSettings.transport !== "agent") {
+          jiraSettings = { ...jiraSettings, baseUrl: active.jiraBaseUrl, transport: "agent",
+            type: new URL(active.jiraBaseUrl).hostname.endsWith(".atlassian.net") ? "cloud" : "data-center" };
+          localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
+        }
+      }
       if (Date.now() < agentStatusMessageUntil) return true;
       setAgentConnectionState({
         connected: true,
         title: active.name || "Локальный агент подключён",
-        detail: `${active.platform} · связь установлена только что`,
+        detail: `Подключён · версия ${active.version}`,
       });
       return true;
     }
@@ -6812,7 +6835,61 @@ async function createAgentPairing() {
   }
 }
 
+async function loadDesktopAgentDownloads() {
+  const container = document.getElementById("desktopAgentDownloads");
+  try {
+    const result = await reportApi("/api/agent/downloads");
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", "Платформа агента");
+    for (const item of result.downloads) {
+      const option = document.createElement("option");
+      option.value = item.url; option.textContent = item.label;
+      option.disabled = !item.available; select.append(option);
+    }
+    const platform = String(navigator.userAgentData?.platform || navigator.platform).toLowerCase();
+    const preferred = platform.includes("win") ? "windows" : platform.includes("linux") ? "linux" : "mac";
+    const selected = result.downloads.find(item => item.available && item.platform.startsWith(preferred)) || result.downloads.find(item => item.available);
+    const download = document.createElement("a");
+    download.className = "button button-secondary"; download.textContent = "Скачать";
+    download.setAttribute("download", "");
+    if (selected) { select.value = selected.url; download.href = selected.url; }
+    else { download.textContent = "Нет сборок"; select.disabled = true; }
+    select.addEventListener("change", () => { download.href = select.value; });
+    container.replaceChildren(select, download);
+  } catch {
+    const retry = document.createElement("button");
+    retry.className = "button button-secondary"; retry.type = "button";
+    retry.textContent = "Повторить загрузку";
+    retry.addEventListener("click", loadDesktopAgentDownloads);
+    container.replaceChildren(retry);
+  }
+}
+let desktopLinkTimer;
+async function prepareDesktopAgent() {
+  const button = document.getElementById("prepareDesktopAgentButton");
+  const link = document.getElementById("launchDesktopAgentLink");
+  const hint = document.getElementById("desktopAgentHint");
+  button.disabled = true; link.hidden = true;
+  try {
+    const result = await reportApi("/api/agent/pairings", { method: "POST", body: "{}" });
+    const url = new URL("qareport-agent://connect");
+    url.searchParams.set("server", result.serverUrl); url.searchParams.set("code", result.code);
+    url.searchParams.set("theme", document.documentElement.dataset.theme || "light");
+    link.href = url.href; link.hidden = false; button.hidden = true;
+    hint.textContent = "Откройте установленный агент и подтвердите подключение.";
+    clearTimeout(desktopLinkTimer);
+    desktopLinkTimer = setTimeout(() => {
+      link.hidden = true; button.hidden = false; link.removeAttribute("href");
+      hint.textContent = "Ссылка истекла. Подключите заново.";
+    }, Math.max(0, Date.parse(result.expiresAt) - Date.now()));
+  } catch (error) { hint.textContent = error.message; }
+  finally { button.disabled = false; }
+}
+document.getElementById("prepareDesktopAgentButton").addEventListener("click", prepareDesktopAgent);
+
 function openAgentSetup() {
+  loadDesktopAgentDownloads();
+  syncAgentTheme();
   closeHeaderDropdowns();
   elements.agentServerUrl.value = window.location.origin;
   elements.agentJiraUrl.value ||= jiraSettings.baseUrl || "";
@@ -6886,7 +6963,7 @@ async function testJiraThroughAgent() {
     showToast(`Проверка Jira: ${error.message}`, 7000);
   } finally {
     elements.testAgentJiraButton.disabled = false;
-    elements.testAgentJiraButton.textContent = "Проверить через агент";
+    elements.testAgentJiraButton.textContent = "Проверить Jira";
   }
 }
 
@@ -7516,7 +7593,6 @@ elements.jiraMenu.addEventListener("click", () => closeHeaderDropdowns());
 elements.copyMenu.addEventListener("click", () => closeHeaderDropdowns());
 elements.openAgentSetupButton?.addEventListener("click", openAgentSetup);
 elements.closeAgentSetupButton.addEventListener("click", closeAgentSetup);
-elements.closeAgentSetupFooterButton.addEventListener("click", closeAgentSetup);
 elements.createAgentPairingButton.addEventListener("click", createAgentPairing);
 document.querySelectorAll("[data-agent-copy-target]").forEach((button) => {
   button.addEventListener("click", () => {
