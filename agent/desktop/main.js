@@ -1,11 +1,12 @@
 "use strict";
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, nativeTheme, session } = require("electron");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const fs = require("node:fs");
 const tls = require("node:tls");
 const core = require("../qa-report-agent");
 const { parseLink, jiraFromForm } = require("./connection");
+const { createJiraTransport } = require("./network");
 
 // Keep the CLI configuration and corporate trust chain; never disable TLS verification.
 if (tls.setDefaultCACertificates && tls.getCACertificates) {
@@ -95,6 +96,7 @@ else {
   app.on("window-all-closed", () => { if (!tray) app.quit(); });
   app.on("activate", show);
   app.whenReady().then(() => {
+    core.setJiraTransport(createJiraTransport(session.fromPartition("qa-report-jira", { cache: false })));
     if (app.isPackaged) app.setAsDefaultProtocolClient("qareport-agent");
     else app.setAsDefaultProtocolClient("qareport-agent", process.execPath, [path.resolve(__dirname, "..")]);
     try { config = core.readConfig(); if (config) config.desktop = true; } catch (error) { status.message = core.errorMessage(error); }

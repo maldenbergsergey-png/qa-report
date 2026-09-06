@@ -19,7 +19,7 @@ async function downloadRelease(directory = path.join(__dirname, "..", "downloads
     }
     const temporary = `${file}.${crypto.randomUUID()}.part`;
     try {
-      const response = await fetch(`${manifest.baseUrl}/${artifact.name}`, { signal: AbortSignal.timeout(900_000) });
+      const response = await fetch(artifact.sourceUrl || `${manifest.baseUrl}/${artifact.name}`, { signal: AbortSignal.timeout(900_000) });
       if (!response.ok) throw new Error(`Download failed: ${artifact.name} (HTTP ${response.status})`);
       await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, { flags: "wx" }));
       if (await checksum(temporary) !== artifact.sha256) throw new Error(`Checksum mismatch: ${artifact.name}`);

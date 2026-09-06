@@ -10,6 +10,11 @@ const readline = require("node:readline/promises");
 const tls = require("node:tls");
 
 const VERSION = "0.2.6";
+let jiraRequest = (...args) => fetch(...args);
+function setJiraTransport(request) {
+  if (typeof request !== "function") throw new TypeError("Jira transport must be a function");
+  jiraRequest = request;
+}
 
 function errorMessage(error) {
   const parts = [];
@@ -364,7 +369,7 @@ async function executeNetworkTest(payload) {
   const base = new URL(payload.baseUrl);
   const target = new URL(`${base.pathname.replace(/\/+$/, "")}/rest/api/2/serverInfo`, base.origin);
   const startedAt = Date.now();
-  const response = await fetch(target, {
+  const response = await jiraRequest(target, {
     method: "GET",
     redirect: "manual",
     headers: { Accept: "application/json" },
@@ -411,7 +416,7 @@ function jiraAuthHeaders(connection) {
 async function jiraFetch(connection, pathname, options = {}) {
   const { returnMeta = false, ...fetchOptions } = options;
   const formData = fetchOptions.body instanceof FormData;
-  const response = await fetch(`${connection.baseUrl}${pathname}`, {
+  const response = await jiraRequest(`${connection.baseUrl}${pathname}`, {
     ...fetchOptions,
     redirect: "manual",
     headers: {
@@ -664,4 +669,4 @@ if (require.main === module) {
 }
 
 module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl, normalizeServerUrl,
-  configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };
+  configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };

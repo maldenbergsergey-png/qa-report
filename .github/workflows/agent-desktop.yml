@@ -25,6 +25,10 @@ jobs:
         working-directory: agent
       - run: npm run check
       - run: npm test
+      - name: Verify Chromium Jira networking
+        if: runner.os == 'Windows'
+        working-directory: agent
+        run: npx electron build/verify-network.cjs
       - run: npm run dist -- --${{ matrix.platform }}
         working-directory: agent
         env:
