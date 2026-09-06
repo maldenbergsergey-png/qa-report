@@ -32,7 +32,7 @@ test('complete offline shell includes every local script/style and install icon'
   for (const size of [192, 512]) {
     const icon = manifest.icons.find(i => i.sizes === `${size}x${size}`);
     assert.ok(stored.has(icon.src));
-    const png = fs.readFileSync(path.join(root, icon.src));
+    const png = fs.readFileSync(path.join(root, new URL(icon.src, 'https://qa.test').pathname));
     assert.equal(png.readUInt32BE(16), size);
     assert.equal(png.readUInt32BE(20), size);
   }
