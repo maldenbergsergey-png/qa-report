@@ -45,7 +45,8 @@
         }
       ],
       "category": "public.app-category.productivity",
-      "icon": "../icons/agent-512.png"
+      "icon": "../icons/agent-512.png",
+      "identity": "-"
     },
     "win": {
       "target": [

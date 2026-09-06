@@ -13,7 +13,6 @@ COPY --chown=node:node pwa.js sw.js manifest.webmanifest ./
 COPY --chown=node:node icons ./icons
 COPY --chown=node:node downloads ./downloads
 COPY --chown=node:node scripts ./scripts
-RUN node scripts/fetch-agent-release.js
 RUN mkdir -p /app/feedback-data /app/reports-data && chown -R node:node /app/feedback-data /app/reports-data
 
 USER node

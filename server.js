@@ -6,6 +6,7 @@ const { DatabaseSync } = require("node:sqlite");
 const { parseJiraMarkup } = require("./jira-markup-import");
 
 const ROOT = __dirname;
+const agentRelease = require("./scripts/agent-release.json");
 
 function loadLocalEnv() {
   const envPath = path.join(ROOT, ".env");
@@ -1908,7 +1909,9 @@ const server = http.createServer(async (request, response) => {
         ["linux-arm64", "Linux · Debian / Ubuntu ARM64", "qr-report-agent-linux-arm64.deb"],
       ];
       sendJson(response, 200, { downloads: candidates.map(([platform, label, filename]) => ({
-        platform, label, url: `/downloads/${filename}`, available: fs.existsSync(path.join(ROOT, "downloads", filename)),
+        platform, label,
+        url: agentRelease.files.find(file => file.name === filename)?.downloadUrl || `/downloads/${filename}`,
+        available: Boolean(agentRelease.files.find(file => file.name === filename)?.downloadUrl) || fs.existsSync(path.join(ROOT, "downloads", filename)),
       })) });
       return;
     }

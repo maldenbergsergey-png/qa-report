@@ -6851,7 +6851,7 @@ async function loadDesktopAgentDownloads() {
     const selected = result.downloads.find(item => item.available && item.platform.startsWith(preferred)) || result.downloads.find(item => item.available);
     const download = document.createElement("a");
     download.className = "button button-secondary"; download.textContent = "Скачать";
-    download.setAttribute("download", "");
+    download.target = "_blank"; download.rel = "noopener noreferrer";
     if (selected) { select.value = selected.url; download.href = selected.url; }
     else { download.textContent = "Нет сборок"; select.disabled = true; }
     select.addEventListener("change", () => { download.href = select.value; });
