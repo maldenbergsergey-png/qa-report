@@ -65,7 +65,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "runAfterFinish": true,
-      "artifactName": "qr-report-agent-windows-setup.${ext}"
+      "artifactName": "qr-report-agent-windows-setup.${ext}",
+      "include": "build/installer.nsh"
     },
     "linux": {
       "target": [
@@ -81,7 +82,8 @@
       "maintainer": "QA Report",
       "executableName": "qr-report-agent",
       "icon": "../icons/agent-512.png"
-    }
+    },
+    "beforePack": "./build/before-pack.js"
   },
   "homepage": "https://github.com/maldenbergsergey-png/qa-report"
 }

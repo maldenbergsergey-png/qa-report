@@ -35,6 +35,10 @@ jobs:
           APPLE_ID: ${{ secrets.AGENT_APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.AGENT_APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.AGENT_APPLE_TEAM_ID }}
+      - name: Verify Windows installation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./agent/build/verify-windows-install.ps1
       - name: Verify macOS signatures
         if: runner.os == 'macOS'
         run: |
