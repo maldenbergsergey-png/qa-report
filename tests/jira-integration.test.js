@@ -160,7 +160,7 @@ async function main() {
     const commentResult = await commentResponse.json();
     assert.equal(commentResult.verified, true);
     assert.equal(commentResult.commentId, "10001");
-    assert.equal(commentResult.apiRevision, 7);
+    assert.equal(commentResult.apiRevision, 8);
     const patTestRequest = received.find((item) => item.url === "/rest/api/2/myself");
     assert.equal(patTestRequest.authorization, "Bearer secret-pat");
     const cloudCommentRequest = received.find(
@@ -279,6 +279,12 @@ async function main() {
     assert.deepEqual(Buffer.from(await downloadResponse.arrayBuffer()), Buffer.from("iVBORw0KGgo=", "base64"));
     assert.match(received.find(item=>item.url.startsWith("/rest/api/3/attachment/content/")).authorization, /^Basic /);
 
+    const inventory = await fetch(`${appOrigin}/api/jira/attachment-manifest`, {
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({type:"data-center",baseUrl:"http://127.0.0.1:4199",token:"secret-pat",issueUrl:"http://127.0.0.1:4199/browse/QA-123"}),
+    });
+    assert.equal(inventory.status,200);const inventoryBody=await inventory.json();
+    assert.equal(inventoryBody.attachmentReuse,true);assert.equal(inventoryBody.attachments[0].id,"42");
     const tinyPng = Buffer.from("iVBORw0KGgo=", "base64").toString("base64");
     const attachmentResponse = await fetch(`${appOrigin}/api/jira/attachments`, {
       method: "POST",
@@ -301,6 +307,7 @@ async function main() {
     });
     assert.equal(attachmentResponse.status, 200);
     assert.equal((await attachmentResponse.json()).attachments[0].attachmentId, "local-1");
+    assert.match(received.find(item=>item.url.endsWith("/attachments")).body.toString(), /filename="shot.png"/);
 
     const reportDocument = {
       reportId: "server-report-1",

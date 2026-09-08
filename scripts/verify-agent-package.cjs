@@ -19,5 +19,6 @@ for (const relative of targets[process.argv[2]]) {
     assert.deepEqual(asar.extractFile(archive, name), fs.readFileSync(path.join(root, name)), `Stale ${name} in ${relative}`);
   }
   assert.match(asar.extractFile(archive, "qa-report-agent.js").toString(), /attachmentDownload: true/);
+  assert.match(asar.extractFile(archive, "qa-report-agent.js").toString(), /jira\.attachment-manifest/);
   console.log(`PASS: ${relative}, GUI ${pkg.version}, current attachment import core`);
 }

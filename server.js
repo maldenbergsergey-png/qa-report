@@ -5,7 +5,7 @@ const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { parseJiraMarkup } = require("./jira-markup-import");
 const { createLocalImportService } = require("./local-import-server");
-const { downloadJiraAttachment } = require("./jira-attachment-transfer");
+const { downloadJiraAttachment, listJiraAttachments } = require("./jira-attachment-transfer");
 
 const ROOT = __dirname;
 const agentRelease = require("./scripts/agent-release.json");
@@ -47,7 +47,7 @@ const MAX_ATTACHMENT_FILE = readSizeMb("QA_REPORT_MAX_ATTACHMENT_MB", 50);
 const localImportService = createLocalImportService({ maxFileBytes: MAX_ATTACHMENT_FILE });
 const STORE_REPORT_ATTACHMENTS = process.env.QA_REPORT_STORE_ATTACHMENTS === "true";
 const APP_VERSION = "0.3.0";
-const API_REVISION = 7;
+const API_REVISION = 8;
 const AGENT_PAIRING_TTL_MS = 10 * 60 * 1000;
 const AGENT_JOB_TTL_MS = 5 * 60 * 1000;
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
@@ -571,7 +571,7 @@ async function waitForAgentJob(owner, jobId, timeoutMs = 120_000) {
 async function handleAgentJiraRequest(request, response, action) {
   const owner = resolveReportOwner(request);
   const body = await readJson(request);
-  const allowed = new Set(["test", "comment", "attachments", "import-comment", "import-attachment"]);
+  const allowed = new Set(["test", "comment", "attachments", "import-comment", "import-attachment", "attachment-manifest"]);
   if (!allowed.has(action)) {
     const error = new Error("Эта Jira-команда локального агента не разрешена");
     error.status = 404;
@@ -905,6 +905,7 @@ function sanitizeAttachmentName(name, mimeType, index) {
     .trim()
     .slice(0, 180);
   const currentExtension = path.extname(safeBase).toLowerCase();
+  if (currentExtension === expectedExtension || (mimeType === "image/jpeg" && currentExtension === ".jpeg")) return safeBase;
   const baseWithoutExtension = currentExtension ? safeBase.slice(0, -currentExtension.length) : safeBase;
   return `${baseWithoutExtension || `image-${index + 1}`}${expectedExtension}`;
 }
@@ -1319,6 +1320,15 @@ async function handleJiraImportComment(request, response) {
   });
 }
 
+async function handleJiraAttachmentManifest(request, response) {
+  const body = await readJson(request);
+  const connection = normalizeConnection(body);
+  const { issueKey } = parseIssueReference(connection, body.issueUrl);
+  const attachments = await listJiraAttachments({ connection, issueKey, jiraFetch });
+  sendJson(response, 200, { ok: true, attachmentReuse: true,
+    issueUrl: `${connection.baseUrl}/browse/${encodeURIComponent(issueKey)}`, attachments });
+}
+
 async function handleJiraImportAttachment(request, response) {
   const body = await readJson(request);
   const connection = normalizeConnection(body);
@@ -1651,63 +1661,13 @@ async function handleJiraAttachments(request, response) {
   if (files.length > 20) throw new Error("За один раз можно загрузить не более 20 вложений");
   const version = connection.type === "cloud" ? "3" : "2";
   const normalizedFiles = files.map(decodeAttachmentFile);
-  const usedNames = new Set();
-  const usedScreenshotNumbers = [];
-  let attachmentListAvailable = false;
-  try {
-    const issue = await jiraFetch(
-      connection,
-      `/rest/api/${version}/issue/${encodeURIComponent(issueKey)}?fields=attachment`,
-    );
-    for (const attachment of issue.fields?.attachment || []) {
-      if (!attachment.filename) continue;
-      const filename = String(attachment.filename).toLowerCase();
-      usedNames.add(filename);
-      const match = filename.match(/^screenshot-(\d+)\.[a-z0-9]+$/i);
-      if (match) usedScreenshotNumbers.push(Number(match[1]));
-    }
-    attachmentListAvailable = true;
-  } catch {
-    // Если у пользователя нет права читать список вложений, загрузка всё равно
-    // продолжится. Имена текущей пачки останутся уникальными между собой.
+  const existing = await listJiraAttachments({ connection, issueKey, jiraFetch });
+  const usedNames = new Set(existing.map(file => String(file.filename).toLowerCase()));
+  for (const file of normalizedFiles) {
+    const parsed = path.parse(file.name); let name = file.name, counter = 2;
+    while (usedNames.has(name.toLowerCase())) name = `${parsed.name} (${counter++})${parsed.ext}`;
+    file.name = name; usedNames.add(name.toLowerCase());
   }
-  let screenshotNumber = Math.max(0, ...usedScreenshotNumbers) + 1;
-  const fallbackPrefix = `screenshot-${Date.now()}`;
-  normalizedFiles.forEach((file, index) => {
-    const extension = path.extname(file.name) || ".png";
-    if (!attachmentListAvailable) {
-      file.name = file.kind === "image" ? `${fallbackPrefix}-${index + 1}${extension}` : file.name;
-      usedNames.add(file.name.toLowerCase());
-      return;
-    }
-    if (file.kind !== "image") {
-      const requested = file.name;
-      const parsed = path.parse(requested);
-      let candidate = requested;
-      let counter = 2;
-      while (usedNames.has(candidate.toLowerCase())) {
-        candidate = `${parsed.name || "file"}-${counter}${parsed.ext || ""}`;
-        counter += 1;
-      }
-      file.name = candidate;
-      usedNames.add(candidate.toLowerCase());
-      return;
-    }
-    const requestedName = file.name.toLowerCase();
-    const requestedMatch = requestedName.match(/^screenshot-(\d+)\.[a-z0-9]+$/i);
-    let candidate = "";
-    if (requestedMatch && !usedNames.has(requestedName)) {
-      candidate = file.name;
-      screenshotNumber = Math.max(screenshotNumber, Number(requestedMatch[1]) + 1);
-    } else {
-      do {
-        candidate = `screenshot-${screenshotNumber}${extension}`;
-        screenshotNumber += 1;
-      } while (usedNames.has(candidate.toLowerCase()));
-    }
-    file.name = candidate;
-    usedNames.add(candidate.toLowerCase());
-  });
   const results = [];
   for (const file of normalizedFiles) {
     const form = new FormData();
@@ -1956,7 +1916,7 @@ const server = http.createServer(async (request, response) => {
       await handleAgentJobCreate(request, response);
       return;
     }
-    const agentJiraMatch = requestPath.match(/^\/api\/agent\/jira\/(test|comment|attachments|import-comment|import-attachment)$/);
+    const agentJiraMatch = requestPath.match(/^\/api\/agent\/jira\/(test|comment|attachments|import-comment|import-attachment|attachment-manifest)$/);
     if (request.method === "POST" && agentJiraMatch) {
       await handleAgentJiraRequest(request, response, agentJiraMatch[1]);
       return;
@@ -1980,6 +1940,10 @@ const server = http.createServer(async (request, response) => {
       if (await localImportService.browser(request, response, {
         owner: `${owner.source}:${owner.id}`, origin: requestOrigin(request),
       })) return;
+    }
+    if (request.method === "POST" && requestPath === "/api/jira/attachment-manifest") {
+      await handleJiraAttachmentManifest(request, response);
+      return;
     }
     if (request.method === "POST" && requestPath === "/api/jira/import-attachment") {
       await handleJiraImportAttachment(request, response);

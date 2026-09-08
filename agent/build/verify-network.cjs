@@ -51,6 +51,9 @@ app.whenReady().then(async () => {
   const imported = await core.executeJiraImportComment(config, payload);
   assert.equal(imported.attachmentDownload, true);
   assert.equal(imported.attachments[0].filename, 'screenshot.png');
+  const manifest = await core.executeJiraAttachmentManifest(config,{issueUrl:`${baseUrl}/browse/QA-1`});
+  assert.equal(manifest.attachmentReuse,true);assert.equal(manifest.attachments[0].id,'7');
+  await assert.rejects(core.executeJiraAttachmentManifest(config,{issueUrl:'https://other.example/browse/QA-1'}), /другую Jira/);
   const downloaded = await core.executeJiraImportAttachment(config, { ...payload, attachmentId: '7' });
   assert.deepEqual(Buffer.from(downloaded.file.dataBase64, 'base64'), attachmentBytes);
   assert.equal(requests.at(-1).headers.authorization, 'Bearer test-pat');

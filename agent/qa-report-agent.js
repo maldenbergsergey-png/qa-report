@@ -9,7 +9,7 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const tls = require("node:tls");
 
-const VERSION = "0.2.7";
+const VERSION = "0.2.8";
 let jiraRequest = (...args) => fetch(...args);
 function setJiraTransport(request) {
   if (typeof request !== "function") throw new TypeError("Jira transport must be a function");
@@ -514,11 +514,16 @@ async function executeJiraAttachments(config, payload) {
   if (!files.length) return { ok: true, attachments: [] };
   if (files.length > 20) throw new Error("За один раз разрешено не более 20 вложений");
   const version = connection.type === "cloud" ? "3" : "2";
+  const existing = await listJiraAttachments({ connection, issueKey, jiraFetch });
+  const usedNames = new Set(existing.map(file => String(file.filename).toLowerCase()));
   const results = [];
   for (const [index, file] of files.entries()) {
     const bytes = Buffer.from(String(file.dataBase64 || ""), "base64");
     if (!bytes.length) throw new Error(`Вложение ${index + 1} пустое`);
-    const name = path.basename(String(file.name || `attachment-${index + 1}`)).replace(/[\r\n"]/g, "_");
+    let name = path.basename(String(file.name || `attachment-${index + 1}`)).replace(/[\r\n"]/g, "_");
+    const parsed = path.parse(name); let counter = 2;
+    while (usedNames.has(name.toLowerCase())) name = `${parsed.name} (${counter++})${parsed.ext}`;
+    usedNames.add(name.toLowerCase());
     const form = new FormData();
     form.append("file", new Blob([bytes], { type: String(file.type || "application/octet-stream") }), name);
     const uploaded = await jiraFetch(connection, `/rest/api/${version}/issue/${encodeURIComponent(issueKey)}/attachments`, {
@@ -550,6 +555,27 @@ async function executeJiraImportComment(config, payload) {
 
 }
 
+async function listJiraAttachments({ connection, issueKey, jiraFetch }) {
+  const version = connection.type === "cloud" ? "3" : "2";
+  const issue = await jiraFetch(connection, `/rest/api/${version}/issue/${encodeURIComponent(issueKey)}?fields=attachment`);
+  if (!Array.isArray(issue.fields?.attachment)) throw new Error("Jira не вернула список вложений. Публикация остановлена, чтобы не создать дубликаты");
+  const safeUrl = value => {
+    if (!value) return "";
+    const url = new URL(value, `${connection.baseUrl}/`);
+    return url.origin === new URL(connection.baseUrl).origin && !url.username && !url.password ? url.href : "";
+  };
+  return issue.fields.attachment.map(item => ({
+    id: String(item.id), filename: item.filename, mimeType: item.mimeType, size: item.size,
+    content: safeUrl(item.content), thumbnail: safeUrl(item.thumbnail),
+  }));
+}
+async function executeJiraAttachmentManifest(config, payload) {
+  const connection = configuredJira(config, payload);
+  const { issueKey } = issueReference(connection, payload.issueUrl);
+  return { ok: true, attachmentReuse: true, issueUrl: `${connection.baseUrl}/browse/${encodeURIComponent(issueKey)}`,
+    attachments: await listJiraAttachments({ connection, issueKey, jiraFetch }) };
+}
+
 async function executeJiraImportAttachment(config, payload) {
   const connection = configuredJira(config, payload);
   const { issueKey } = issueReference(connection, payload.commentUrl);
@@ -577,6 +603,7 @@ async function executeJob(config, job) {
   if (job.type === "jira.test") return executeJiraTest(config, job.payload);
   if (job.type === "jira.comment") return executeJiraComment(config, job.payload);
   if (job.type === "jira.attachments") return executeJiraAttachments(config, job.payload);
+  if (job.type === "jira.attachment-manifest") return executeJiraAttachmentManifest(config, job.payload);
   if (job.type === "jira.import-attachment") return executeJiraImportAttachment(config, job.payload);
   if (job.type === "jira.import-comment") return executeJiraImportComment(config, job.payload);
   throw new Error(`Неподдерживаемое задание: ${job.type}`);
@@ -698,4 +725,4 @@ if (require.main === module) {
 }
 
 module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl, normalizeServerUrl,
-  executeJiraImportAttachment, executeJiraImportComment, configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };
+  executeJiraAttachmentManifest, executeJiraImportAttachment, executeJiraImportComment, configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };
