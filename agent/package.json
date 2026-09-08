@@ -1,6 +1,6 @@
 {
   "name": "qr-report-agent",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Графический агент QA Report для подключения к Jira",
   "author": "QA Report",
   "private": true,

@@ -43,6 +43,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./agent/build/verify-windows-install.ps1
+      - name: Verify bundled agent version and sources
+        working-directory: agent
+        run: node ../scripts/verify-agent-package.cjs ${{ matrix.platform }}
       - name: Verify macOS signatures
         if: runner.os == 'macOS'
         run: |
