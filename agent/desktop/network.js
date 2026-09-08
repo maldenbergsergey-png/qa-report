@@ -1,12 +1,19 @@
 "use strict";
+const { version } = require("../package.json");
+const API_USER_AGENT = `QA-Report-Agent/${version}`;
 
 function createJiraTransport(networkSession) {
   return async (url, options = {}) => {
     const target = new URL(url);
     if (!["https:", "http:"].includes(target.protocol)) throw new Error("Недопустимый протокол Jira");
+    // Jira applies additional browser XSRF checks to Chromium's default UA.
+    // This isolated main-process transport is an API client with explicit auth.
+    const headers = new Headers(options.headers);
+    headers.set("User-Agent", API_USER_AGENT);
     try {
       return await networkSession.fetch(target.href, {
         ...options,
+        headers,
         // Use Chromium's certificate chain builder and OS trust decisions.
         // Keep redirects manual and credentials explicit; no ambient session login.
         redirect: "manual", credentials: "omit", cache: "no-store",

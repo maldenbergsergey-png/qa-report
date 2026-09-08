@@ -20,5 +20,6 @@ for (const relative of targets[process.argv[2]]) {
   }
   assert.match(asar.extractFile(archive, "qa-report-agent.js").toString(), /attachmentDownload: true/);
   assert.match(asar.extractFile(archive, "qa-report-agent.js").toString(), /jira\.attachment-manifest/);
+  assert.match(asar.extractFile(archive, "desktop/network.js").toString(), /headers\.set\("User-Agent", API_USER_AGENT\)/);
   console.log(`PASS: ${relative}, GUI ${pkg.version}, current attachment import core`);
 }

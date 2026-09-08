@@ -29,6 +29,10 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: agent
         run: npx electron build/verify-network.cjs
+      - name: Verify Jira attachment and comment XSRF compatibility
+        if: runner.os == 'Windows'
+        working-directory: agent
+        run: npx electron build/verify-xsrf.cjs
       - run: npm run dist -- --${{ matrix.platform }}
         working-directory: agent
         env:
