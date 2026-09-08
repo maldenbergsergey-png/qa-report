@@ -37,6 +37,13 @@ test('complete offline shell includes every local script/style and install icon'
     assert.equal(png.readUInt32BE(20), size);
   }
 });
+test('Docker image includes every script referenced by the editor', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
+  for (const match of html.matchAll(/<script[^>]+src="\/([^"?]+\.js)(?:\?[^"#]*)?"/g)) {
+    assert.match(dockerfile, new RegExp(`(?:^|\\s)${match[1].replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}(?:\\s|$)`, 'm'), match[1]);
+  }
+});
 test('offline deep links use editor shell; APIs, mutations and external resources bypass cache', async () => {
   const { handlers, stored } = worker();
   stored.set('/', { editor: true });
