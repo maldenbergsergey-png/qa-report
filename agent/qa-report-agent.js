@@ -9,7 +9,7 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const tls = require("node:tls");
 
-const VERSION = "0.2.6";
+const VERSION = "0.2.7";
 let jiraRequest = (...args) => fetch(...args);
 function setJiraTransport(request) {
   if (typeof request !== "function") throw new TypeError("Jira transport must be a function");
@@ -541,7 +541,35 @@ async function executeJiraImportComment(config, payload) {
   if (!commentId) throw new Error("В ссылке не найден ID комментария");
   const version = connection.type === "cloud" ? "3" : "2";
   const comment = await jiraFetch(connection, `/rest/api/${version}/issue/${encodeURIComponent(issueKey)}/comment/${encodeURIComponent(commentId)}`);
-  return { ok: true, format: connection.type === "cloud" ? "adf" : "wiki", body: comment.body, issueUrl: `${connection.baseUrl}/browse/${encodeURIComponent(issueKey)}`, commentId, attachments: [] };
+  let attachments = [];
+  try {
+    const issue = await jiraFetch(connection, `/rest/api/${version}/issue/${encodeURIComponent(issueKey)}?fields=attachment`);
+    attachments = (issue.fields?.attachment || []).map(item => ({ id: String(item.id), filename: item.filename, content: item.content, thumbnail: item.thumbnail, mimeType: item.mimeType }));
+  } catch { /* Text remains importable when Jira denies access to the attachment list. */ }
+  return { ok: true, format: connection.type === "cloud" ? "adf" : "wiki", body: comment.body, issueUrl: `${connection.baseUrl}/browse/${encodeURIComponent(issueKey)}`, commentId, attachments, attachmentDownload: true };
+
+}
+
+async function executeJiraImportAttachment(config, payload) {
+  const connection = configuredJira(config, payload);
+  const { issueKey } = issueReference(connection, payload.commentUrl);
+  const version = connection.type === "cloud" ? "3" : "2";
+  const issue = await jiraFetch(connection, `/rest/api/${version}/issue/${encodeURIComponent(issueKey)}?fields=attachment`);
+  const attachment = (issue.fields?.attachment || []).find(item => String(item.id) === String(payload.attachmentId));
+  if (!attachment) throw new Error("Вложение не найдено или недоступно в этой задаче");
+  const limit = 50 * 1024 * 1024;
+  if (Number(attachment.size) > limit) throw new Error("Вложение больше 50 МБ");
+  const target = connection.type === "cloud"
+    ? new URL(`${connection.baseUrl}/rest/api/3/attachment/content/${encodeURIComponent(attachment.id)}?redirect=false`)
+    : new URL(attachment.content, `${connection.baseUrl}/`);
+  if (target.origin !== new URL(connection.baseUrl).origin || target.username || target.password) throw new Error("Адрес вложения вне разрешённой Jira");
+  const response = await jiraRequest(target.toString(), { redirect: "manual", headers: jiraAuthHeaders(connection), signal: AbortSignal.timeout(60_000) });
+  const type = String(response.headers.get("content-type") || "").split(";")[0];
+  if (!response.ok || (type === "text/html" && attachment.mimeType !== "text/html")) { await response.body?.cancel(); throw new Error(`Jira не отдала файл (HTTP ${response.status}). Обновите подключение Jira`); }
+  if (Number(response.headers.get("content-length")) > limit) { await response.body?.cancel(); throw new Error("Вложение больше 50 МБ"); }
+  const chunks = []; let size = 0;
+  for await (const chunk of response.body) { size += chunk.length; if (size > limit) throw new Error("Вложение больше 50 МБ"); chunks.push(chunk); }
+  return { ok: true, file: { name: attachment.filename, type: attachment.mimeType || type || "application/octet-stream", dataBase64: Buffer.concat(chunks).toString("base64") } };
 }
 
 async function executeJob(config, job) {
@@ -549,6 +577,7 @@ async function executeJob(config, job) {
   if (job.type === "jira.test") return executeJiraTest(config, job.payload);
   if (job.type === "jira.comment") return executeJiraComment(config, job.payload);
   if (job.type === "jira.attachments") return executeJiraAttachments(config, job.payload);
+  if (job.type === "jira.import-attachment") return executeJiraImportAttachment(config, job.payload);
   if (job.type === "jira.import-comment") return executeJiraImportComment(config, job.payload);
   throw new Error(`Неподдерживаемое задание: ${job.type}`);
 }
@@ -669,4 +698,4 @@ if (require.main === module) {
 }
 
 module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl, normalizeServerUrl,
-  configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };
+  executeJiraImportAttachment, executeJiraImportComment, configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };

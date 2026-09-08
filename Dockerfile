@@ -10,6 +10,7 @@ ENV REPORTS_DB_PATH=/app/reports-data/qa-report.sqlite
 COPY --chown=node:node package.json ./
 COPY --chown=node:node server.js app.js jira-markup-import.js checklist-selection.js checklist-table.js checklist-numbering.js release-notes.js index.html styles.css favicon.svg ./
 COPY --chown=node:node pwa.js sw.js manifest.webmanifest ./
+COPY --chown=node:node local-import-server.js jira-attachment-transfer.js attachment-import.js local-import-client.js ./
 COPY --chown=node:node icons ./icons
 COPY --chown=node:node downloads ./downloads
 COPY --chown=node:node scripts ./scripts

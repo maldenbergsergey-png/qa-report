@@ -4,6 +4,8 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { parseJiraMarkup } = require("./jira-markup-import");
+const { createLocalImportService } = require("./local-import-server");
+const { downloadJiraAttachment } = require("./jira-attachment-transfer");
 
 const ROOT = __dirname;
 const agentRelease = require("./scripts/agent-release.json");
@@ -42,9 +44,10 @@ function readSizeMb(name, fallback) {
 
 const MAX_BODY = readSizeMb("QA_REPORT_MAX_BODY_MB", 150);
 const MAX_ATTACHMENT_FILE = readSizeMb("QA_REPORT_MAX_ATTACHMENT_MB", 50);
+const localImportService = createLocalImportService({ maxFileBytes: MAX_ATTACHMENT_FILE });
 const STORE_REPORT_ATTACHMENTS = process.env.QA_REPORT_STORE_ATTACHMENTS === "true";
 const APP_VERSION = "0.3.0";
-const API_REVISION = 6;
+const API_REVISION = 7;
 const AGENT_PAIRING_TTL_MS = 10 * 60 * 1000;
 const AGENT_JOB_TTL_MS = 5 * 60 * 1000;
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR || path.join(ROOT, "feedback-data");
@@ -568,7 +571,7 @@ async function waitForAgentJob(owner, jobId, timeoutMs = 120_000) {
 async function handleAgentJiraRequest(request, response, action) {
   const owner = resolveReportOwner(request);
   const body = await readJson(request);
-  const allowed = new Set(["test", "comment", "attachments", "import-comment"]);
+  const allowed = new Set(["test", "comment", "attachments", "import-comment", "import-attachment"]);
   if (!allowed.has(action)) {
     const error = new Error("Эта Jira-команда локального агента не разрешена");
     error.status = 404;
@@ -586,6 +589,7 @@ async function handleAgentJiraRequest(request, response, action) {
   }
   const { jobId } = createAgentJob(owner, `jira.${action}`, payload);
   const result = await waitForAgentJob(owner, jobId);
+  if (action === "import-attachment") getReportsDb().prepare("DELETE FROM agent_jobs WHERE id = ?").run(jobId);
   sendJson(response, action === "comment" ? 201 : 200, result);
 }
 
@@ -1315,6 +1319,22 @@ async function handleJiraImportComment(request, response) {
   });
 }
 
+async function handleJiraImportAttachment(request, response) {
+  const body = await readJson(request);
+  const connection = normalizeConnection(body);
+  const { issueKey } = parseIssueReference(connection, body.commentUrl);
+  const file = await downloadJiraAttachment({
+    connection, issueKey, attachmentId: body.attachmentId, jiraFetch, maxBytes: MAX_ATTACHMENT_FILE,
+    fetchFile: target => fetch(target, { redirect: "manual", headers: authHeaders(connection), signal: AbortSignal.timeout(60_000) }),
+  });
+  response.writeHead(200, {
+    "Content-Type": file.type, "Content-Length": file.bytes.length,
+    "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+  });
+  response.end(file.bytes);
+}
+
 async function handleChecklistImport(request, response) {
   const body = await readJson(request);
   if (body.format !== "jira") {
@@ -1919,6 +1939,7 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, { ok: true, service: "qa-report" });
       return;
     }
+    if (await localImportService.producer(request, response, requestOrigin(request))) return;
     if (request.method === "POST" && requestPath === "/api/agent/pairings") {
       await handleAgentPairingCreate(request, response);
       return;
@@ -1935,7 +1956,7 @@ const server = http.createServer(async (request, response) => {
       await handleAgentJobCreate(request, response);
       return;
     }
-    const agentJiraMatch = requestPath.match(/^\/api\/agent\/jira\/(test|comment|attachments|import-comment)$/);
+    const agentJiraMatch = requestPath.match(/^\/api\/agent\/jira\/(test|comment|attachments|import-comment|import-attachment)$/);
     if (request.method === "POST" && agentJiraMatch) {
       await handleAgentJiraRequest(request, response, agentJiraMatch[1]);
       return;
@@ -1952,6 +1973,16 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "POST" && requestPath === "/api/agent/poll") {
       await handleAgentPoll(request, response);
+      return;
+    }
+    if (requestPath.startsWith("/api/local-import/sessions")) {
+      const owner = resolveReportOwner(request);
+      if (await localImportService.browser(request, response, {
+        owner: `${owner.source}:${owner.id}`, origin: requestOrigin(request),
+      })) return;
+    }
+    if (request.method === "POST" && requestPath === "/api/jira/import-attachment") {
+      await handleJiraImportAttachment(request, response);
       return;
     }
     if (request.method === "GET" && requestPath === "/api/reports") {

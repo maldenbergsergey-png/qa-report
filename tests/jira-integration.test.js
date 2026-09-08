@@ -81,8 +81,11 @@ async function main() {
       );
       return;
     }
+    if (request.url === "/rest/api/3/attachment/content/42?redirect=false") {
+      response.setHeader("Content-Type", "image/png"); response.end(Buffer.from("iVBORw0KGgo=", "base64")); return;
+    }
     if (request.url.includes("?fields=attachment")) {
-      response.end(JSON.stringify({ fields: { attachment: [] } }));
+      response.end(JSON.stringify({ fields: { attachment: [{id:"42", filename:"screen.png",mimeType:"image/png",content:"http://127.0.0.1:4199/file"}] } }));
       return;
     }
     if (request.url.endsWith("/attachments")) {
@@ -157,7 +160,7 @@ async function main() {
     const commentResult = await commentResponse.json();
     assert.equal(commentResult.verified, true);
     assert.equal(commentResult.commentId, "10001");
-    assert.equal(commentResult.apiRevision, 6);
+    assert.equal(commentResult.apiRevision, 7);
     const patTestRequest = received.find((item) => item.url === "/rest/api/2/myself");
     assert.equal(patTestRequest.authorization, "Bearer secret-pat");
     const cloudCommentRequest = received.find(
@@ -267,6 +270,14 @@ async function main() {
     });
     assert.equal(importResponse.status, 200);
     assert.equal((await importResponse.json()).format, "adf");
+
+    const downloadResponse = await fetch(`${appOrigin}/api/jira/import-attachment`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "cloud", baseUrl: "http://127.0.0.1:4199", user: "qa@example.com", token: "cloud-token", commentUrl: "http://127.0.0.1:4199/browse/QA-123?focusedCommentId=777", attachmentId: "42" }),
+    });
+    assert.equal(downloadResponse.status, 200);
+    assert.deepEqual(Buffer.from(await downloadResponse.arrayBuffer()), Buffer.from("iVBORw0KGgo=", "base64"));
+    assert.match(received.find(item=>item.url.startsWith("/rest/api/3/attachment/content/")).authorization, /^Basic /);
 
     const tinyPng = Buffer.from("iVBORw0KGgo=", "base64").toString("base64");
     const attachmentResponse = await fetch(`${appOrigin}/api/jira/attachments`, {
