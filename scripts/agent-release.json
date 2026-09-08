@@ -14,8 +14,10 @@
     },
     {
       "name": "qr-report-agent-windows-setup.exe",
-      "sha256": "b01ed6db6080015b6f8cc359048f2f7161ab22c568c6b919850ab7c0ca88a564",
-      "downloadUrl": "https://drive.google.com/file/d/1RsrmLKPmAPO9cuf8-x6gGLjdvAMD6uVL/view"
+      "sha256": "77ad223bd6557a2984be3ceae4e2e349ae1f01ca6c9f77c0cee76241cec5c2c3",
+      "downloadUrl": "https://drive.google.com/file/d/1RsrmLKPmAPO9cuf8-x6gGLjdvAMD6uVL/view",
+      "version": "0.3.4",
+      "sourceUrl": "https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.3.4/qr-report-agent-windows-setup.exe"
     },
     {
       "name": "qr-report-agent-linux-amd64.deb",
