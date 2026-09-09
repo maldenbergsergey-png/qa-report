@@ -22,7 +22,6 @@ services:
     volumes:
       - feedback_data:/app/feedback-data
       - reports_data:/app/reports-data
-      - ./agent-releases:/app/agent-releases:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s

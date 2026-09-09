@@ -1,0 +1,85 @@
+{
+  "version": "0.4.0",
+  "files": [
+    {
+      "name": "qa-report-agent-0.4.0-mac-arm64.dmg",
+      "size": 127909419,
+      "sha256": "15399749574a4de92e948a71534b6bc69c2eb4ac43e2dafdc9edda3dd68aa2e3",
+      "parts": [
+        {
+          "name": "qa-report-agent-0.4.0-mac-arm64.dmg.part-001",
+          "size": 50331648,
+          "sha256": "9e8e3e12766bc254cfaa27c43c97c21e1fcb312586c245994f1c769695a19270"
+        },
+        {
+          "name": "qa-report-agent-0.4.0-mac-arm64.dmg.part-002",
+          "size": 50331648,
+          "sha256": "ffd0d5833b1d668ae5523365be0b1070ea887534e320b77422f0e828beb34909"
+        },
+        {
+          "name": "qa-report-agent-0.4.0-mac-arm64.dmg.part-003",
+          "size": 27246123,
+          "sha256": "d3e08727575ac2f4a99bc1edff2acc6dbe7aeda04281b194fc078a5d2454fa3f"
+        }
+      ]
+    },
+    {
+      "name": "qa-report-agent-0.4.0-windows-x64.exe",
+      "size": 120978563,
+      "sha256": "7bb51e51ae20255a4bafd0067155a571e468df29e83b8d0f250f527e37e566fd",
+      "parts": [
+        {
+          "name": "qa-report-agent-0.4.0-windows-x64.exe.part-001",
+          "size": 50331648,
+          "sha256": "0cc819b1f20d92bade41e5a521b470945d7ee76217c160a0b2f7d40398ed3430"
+        },
+        {
+          "name": "qa-report-agent-0.4.0-windows-x64.exe.part-002",
+          "size": 50331648,
+          "sha256": "145cce310031758f2f15e4295c76bdb033fe498121ab448854e84e4d1e58c393"
+        },
+        {
+          "name": "qa-report-agent-0.4.0-windows-x64.exe.part-003",
+          "size": 20315267,
+          "sha256": "82af407c1c2bee25ca5dc663810df9f319082581eedc8ed9b7f968fda6156fc5"
+        }
+      ]
+    },
+    {
+      "name": "qr-report-agent-code-0.4.0.asar",
+      "size": 255410,
+      "sha256": "16d7cdc52246c98cf7be734bda92fd3573d2f8daeb56653d5ecdd70df57756ae",
+      "parts": [
+        {
+          "name": "qr-report-agent-code-0.4.0.asar.part-001",
+          "size": 255410,
+          "sha256": "16d7cdc52246c98cf7be734bda92fd3573d2f8daeb56653d5ecdd70df57756ae"
+        }
+      ]
+    },
+    {
+      "name": "installers.json",
+      "size": 392,
+      "sha256": "5adfdbab2ca3945c8a3ab735bb655b3327fcef819f15bcdb7ed5de869b3fbb9c",
+      "parts": [
+        {
+          "name": "installers.json.part-001",
+          "size": 392,
+          "sha256": "5adfdbab2ca3945c8a3ab735bb655b3327fcef819f15bcdb7ed5de869b3fbb9c"
+        }
+      ]
+    },
+    {
+      "name": "latest.json",
+      "size": 602,
+      "sha256": "6e99b33c31393d040c2526ce2ca616e272faca5590eba6edca6745819a43a80e",
+      "parts": [
+        {
+          "name": "latest.json.part-001",
+          "size": 602,
+          "sha256": "6e99b33c31393d040c2526ce2ca616e272faca5590eba6edca6745819a43a80e"
+        }
+      ]
+    }
+  ]
+}

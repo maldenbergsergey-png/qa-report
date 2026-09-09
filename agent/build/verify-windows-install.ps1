@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
-$installer = Join-Path $PSScriptRoot '../dist/qr-report-agent-windows-setup.exe'
+$version = (Get-Content (Join-Path $PSScriptRoot '../package.json') -Raw | ConvertFrom-Json).version
+$installer = Join-Path $PSScriptRoot "../dist/qa-report-agent-$version-windows-x64.exe"
 $installDir = Join-Path $env:RUNNER_TEMP ('QA Agent Install ' + [guid]::NewGuid().ToString('N'))
 $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }

@@ -1,3 +1,9 @@
+FROM node:22-alpine AS agent-artifacts
+WORKDIR /release
+COPY scripts/package-agent-release.cjs ./assemble.cjs
+COPY agent-bundles ./bundles
+RUN node assemble.cjs assemble bundles /release/ready
+
 FROM node:22-alpine
 
 WORKDIR /app
@@ -14,6 +20,7 @@ COPY --chown=node:node local-import-server.js jira-attachment-transfer.js attach
 COPY --chown=node:node icons ./icons
 COPY --chown=node:node downloads ./downloads
 COPY --chown=node:node scripts ./scripts
+COPY --from=agent-artifacts --chown=node:node /release/ready ./agent-releases
 RUN mkdir -p /app/agent-releases /app/feedback-data /app/reports-data && chown -R node:node /app/feedback-data /app/reports-data
 
 USER node

@@ -22,6 +22,8 @@ build
 .idea
 
 # Graphical agent release artifacts are delivered separately from source.
+downloads/qa-report-agent-*.dmg
+downloads/qa-report-agent-*.exe
 downloads/qr-report-agent-*.dmg
 downloads/qr-report-agent-*.exe
 downloads/qr-report-agent-*.deb

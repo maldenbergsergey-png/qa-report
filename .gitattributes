@@ -1,0 +1,2 @@
+# Preserve release bytes on every OS, including JSON/ASAR transport parts.
+agent-bundles/*.part-* binary

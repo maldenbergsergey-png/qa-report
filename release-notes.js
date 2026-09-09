@@ -9,7 +9,7 @@ window.QaReportReleases = [
         "Агент проверяет обновления автоматически и позволяет установить их из своего окна без повторного скачивания приложения."
       ],
       "improvements": [
-        "Установщики доступны с сайта QA Report для macOS на Apple Silicon и Windows x64."
+        "Установщики для macOS на Apple Silicon и Windows x64 скачиваются с сайта QA Report; версия указана в имени файла."
       ],
       "fixes": []
     }

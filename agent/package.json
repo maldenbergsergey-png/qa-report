@@ -35,7 +35,7 @@
         ]
       }
     ],
-    "artifactName": "qr-report-agent-${os}-${arch}.${ext}",
+    "artifactName": "qa-report-agent-${version}-${os}-${arch}.${ext}",
     "mac": {
       "target": [
         {
@@ -65,7 +65,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "runAfterFinish": true,
-      "artifactName": "qr-report-agent-windows-setup.${ext}",
+      "artifactName": "qa-report-agent-${version}-windows-x64.${ext}",
       "include": "build/installer.nsh"
     },
     "beforePack": "./build/before-pack.js"

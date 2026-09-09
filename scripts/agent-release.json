@@ -2,12 +2,12 @@
   "version": "0.4.0",
   "files": [
     {
-      "name": "qr-report-agent-mac-arm64.dmg",
+      "name": "qa-report-agent-0.4.0-mac-arm64.dmg",
       "size": 127909419,
       "sha256": "15399749574a4de92e948a71534b6bc69c2eb4ac43e2dafdc9edda3dd68aa2e3"
     },
     {
-      "name": "qr-report-agent-windows-setup.exe",
+      "name": "qa-report-agent-0.4.0-windows-x64.exe",
       "size": 120978563,
       "sha256": "7bb51e51ae20255a4bafd0067155a571e468df29e83b8d0f250f527e37e566fd"
     }
