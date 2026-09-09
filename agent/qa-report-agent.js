@@ -9,7 +9,8 @@ const path = require("node:path");
 const readline = require("node:readline/promises");
 const tls = require("node:tls");
 
-const VERSION = "0.2.8";
+const VERSION = "0.3.0";
+const { listJiras, migrateConfig, saveJira } = require("./jira-profiles");
 let jiraRequest = (...args) => fetch(...args);
 function setJiraTransport(request) {
   if (typeof request !== "function") throw new TypeError("Jira transport must be a function");
@@ -84,7 +85,7 @@ function normalizeServerUrl(value) {
 
 function readConfig() {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+    return migrateConfig(JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")));
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw new Error(`Не удалось прочитать ${CONFIG_FILE}: ${error.message}`);
@@ -93,7 +94,11 @@ function readConfig() {
 
 function writeConfig(config) {
   fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  const temporary = `${CONFIG_FILE}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    fs.renameSync(temporary, CONFIG_FILE);
+  } finally { fs.rmSync(temporary, { force: true }); }
   try { fs.chmodSync(CONFIG_FILE, 0o600); } catch { /* Windows управляет ACL самостоятельно. */ }
 }
 
@@ -321,7 +326,7 @@ async function configureJira(config, terminal) {
     }
     jira.pendingVerification = true;
   }
-  config.jira = jira;
+  config = saveJira(config, jira, listJiras(config).find(item => item.baseUrl === jira.baseUrl)?.id || "");
   writeConfig(config);
   if (jira.pendingVerification) {
     config.restartForExtraCa = true;
@@ -391,18 +396,25 @@ async function executeNetworkTest(payload) {
 }
 
 function configuredJira(config, payload) {
-  if (!config.jira?.baseUrl || !config.jira?.token) {
-    const error = new Error("Jira не настроена в локальном агенте. Перезапустите агент и выполните настройку авторизации.");
+  const connections = listJiras(config).filter(jira => jira.baseUrl && jira.token);
+  if (!connections.length) {
+    const error = new Error("Jira не настроена в локальном агенте. Добавьте подключение в агенте.");
     error.status = 401;
     throw error;
   }
-  const requested = jiraBaseFromUrl(payload.issueUrl || payload.commentUrl || payload.baseUrl || config.jira.baseUrl);
-  if (new URL(requested).origin !== new URL(config.jira.baseUrl).origin) {
-    const error = new Error("Задание запрашивает другую Jira, не разрешённую в локальном агенте");
+  // Match the complete Jira base, including its context path. Never choose credentials
+  // from a browser-supplied hint when a task/comment URL identifies the actual target.
+  const raw = payload.issueUrl || payload.commentUrl || payload.baseUrl || (connections.length === 1 ? connections[0].baseUrl : "");
+  const target = new URL(raw);
+  if (target.username || target.password || !["http:", "https:"].includes(target.protocol)) throw new Error("Некорректный адрес Jira");
+  const requested = jiraBaseFromUrl(raw);
+  const connection = connections.find(jira => jiraBaseFromUrl(jira.baseUrl) === requested);
+  if (!connection) {
+    const error = new Error("Задание запрашивает другую Jira, не разрешённую в локальном агенте. Добавьте её в список подключений.");
     error.status = 403;
     throw error;
   }
-  return config.jira;
+  return connection;
 }
 
 function jiraAuthHeaders(connection) {
@@ -447,7 +459,7 @@ async function jiraFetch(connection, pathname, options = {}) {
 
 function issueReference(connection, rawUrl) {
   const url = new URL(String(rawUrl || ""));
-  if (url.origin !== new URL(connection.baseUrl).origin) throw new Error("Ссылка задачи относится к другой Jira");
+  if (url.username || url.password || jiraBaseFromUrl(url.href) !== jiraBaseFromUrl(connection.baseUrl)) throw new Error("Ссылка задачи относится к другой Jira");
   const issueKey = url.pathname.match(/\/browse\/([A-Z][A-Z0-9_]*-\d+)/i)?.[1]?.toUpperCase();
   if (!issueKey) throw new Error("В ссылке не найден ключ задачи Jira");
   return { issueKey, issueUrl: url };
@@ -645,7 +657,7 @@ async function pairWithCode(server, code, name = `${os.hostname()} (${process.pl
   return { serverUrl, deviceId: result.deviceId, secret: result.secret, name };
 }
 
-async function run(config, { signal, onStatus = () => {}, onPreferences = () => {}, version = VERSION } = {}) {
+async function run(config, { signal, onStatus = () => {}, onPreferences = () => {}, onJob = () => {}, version = VERSION } = {}) {
   console.log(`QA Report Agent ${VERSION}`);
   console.log(`Устройство: ${config.name}`);
   console.log(`Сервер: ${config.serverUrl}`);
@@ -657,7 +669,7 @@ async function run(config, { signal, onStatus = () => {}, onPreferences = () => 
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
         method: "POST",
         headers: { Authorization: agentAuthorization(config) },
-        body: JSON.stringify({ version, ...(config.desktop ? { jiraBaseUrl: config.jira?.baseUrl || "" } : {}) }),
+        body: JSON.stringify({ version, ...(config.desktop ? { jiraBaseUrl: listJiras(config)[0]?.baseUrl || "", jiraBaseUrls: listJiras(config).map(jira => jira.baseUrl) } : {}) }),
       });
       failureDelay = 2000;
       onPreferences(response.preferences || {});
@@ -667,6 +679,7 @@ async function run(config, { signal, onStatus = () => {}, onPreferences = () => 
         continue;
       }
       const job = response.job;
+      onJob(true);
       console.log(`[${new Date().toLocaleTimeString()}] Выполняем ${job.type}`);
       try {
         const result = await executeJob(config, job);
@@ -679,7 +692,7 @@ async function run(config, { signal, onStatus = () => {}, onPreferences = () => 
           body: JSON.stringify({ ok: false, error: error.message, status: error.status || 502 }),
         }).catch(() => {});
         console.error(`Ошибка задания: ${error.message}`);
-      }
+      } finally { onJob(false); }
     } catch (error) {
       if (signal?.aborted) break;
       onStatus({ connected: false, message: errorMessage(error) });
@@ -691,6 +704,8 @@ async function run(config, { signal, onStatus = () => {}, onPreferences = () => 
 }
 
 async function main() {
+  if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("Для CLI нужен Node.js 22 или новее");
+  if (!(process.platform === "darwin" && process.arch === "arm64" || process.platform === "win32" && process.arch === "x64")) throw new Error("Поддерживаются macOS Apple Silicon и Windows x64");
   ensureExtraCaRuntime();
   if (process.argv.includes("--reset")) {
     for (const file of [CONFIG_FILE, EXTRA_CA_FILE]) {
@@ -701,16 +716,16 @@ async function main() {
     return;
   }
   let config = readConfig() || await pairAgent();
-  if (!config.jira || process.argv.includes("--configure-jira")) {
+  if (!listJiras(config).length || process.argv.includes("--configure-jira")) {
     const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
     try { config = await configureJira(config, terminal); }
     finally { terminal.close(); }
   }
   if (config.restartForExtraCa) restartWithExtraCa(true);
-  if (config.jira?.pendingVerification) {
+  for (const jira of listJiras(config).filter(item => item.pendingVerification)) {
     console.log("Повторно проверяем Jira с восстановленной TLS-цепочкой…");
-    const verification = await verifyJira(config.jira);
-    delete config.jira.pendingVerification;
+    const verification = await verifyJira(jira);
+    delete jira.pendingVerification;
     writeConfig(config);
     console.log(`  ✓ Jira ответила HTTP ${verification.status}. Авторизация работает.\n`);
   }

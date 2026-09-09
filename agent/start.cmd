@@ -3,7 +3,7 @@ setlocal
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Нужен Node.js 18 или новее: https://nodejs.org/
+  echo Нужен Node.js 22 или новее: https://nodejs.org/
   pause
   exit /b 1
 )

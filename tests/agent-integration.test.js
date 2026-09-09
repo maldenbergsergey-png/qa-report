@@ -61,22 +61,20 @@ test("local agent pairing, restricted job and result flow", async (context) => {
   await fetch(`${ORIGIN}/api/agent/poll`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: authorization },
-    body: JSON.stringify({ version: "0.2.1", jiraBaseUrl: "https://jira.example.test" }),
+    body: JSON.stringify({ version: "0.2.1", jiraBaseUrl: "https://jira.example.test", jiraBaseUrls: ["https://jira.example.test", "https://second.example.test/jira"] }),
   });
   const status = await fetch(`${ORIGIN}/api/agent/status`, { headers: OWNER_HEADERS }).then((response) => response.json());
   assert.equal(status.connected, true);
   assert.equal(status.devices[0].name, "Test device");
   assert.equal(status.devices[0].version, "0.2.1");
   assert.equal(status.devices[0].jiraBaseUrl, "https://jira.example.test");
+  assert.deepEqual(status.devices[0].jiraBaseUrls, ["https://jira.example.test", "https://second.example.test/jira"]);
   assert.equal(status.devices[0].secret, undefined);
   const catalog = await fetch(`${ORIGIN}/api/agent/downloads`).then((response) => response.json());
-  assert.equal(catalog.downloads.length, 5);
-  for (const item of catalog.downloads) {
-    assert.equal(item.available, true);
-    const downloadUrl = new URL(item.url);
-    assert.equal(downloadUrl.origin, "https://drive.google.com");
-    assert.match(downloadUrl.pathname, /^\/file\/d\/[A-Za-z0-9_-]+\/view$/);
-  }
+  assert.equal(catalog.downloads.length, 2);
+  assert.deepEqual(catalog.downloads.map(item => item.platform), ["mac-arm64", "windows"]);
+  for (const item of catalog.downloads) assert.match(item.url, /^\/downloads\/qr-report-agent-(mac-arm64\.dmg|windows-setup\.exe)$/);
+
 
   const preferenceUpdate = await fetch(`${ORIGIN}/api/agent/preferences`, {
     method: "POST", headers: OWNER_HEADERS, body: JSON.stringify({ theme: "dark" }),

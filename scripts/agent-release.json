@@ -1,33 +1,16 @@
 {
-  "version": "0.3.3",
-  "baseUrl": "https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.3.3",
+  "version": "0.4.0",
   "files": [
     {
       "name": "qr-report-agent-mac-arm64.dmg",
-      "sha256": "7287b31f3779acab9720548a82113cf0f623b5994f3f239654ced1f9348ec5f3",
-      "downloadUrl": "https://drive.google.com/file/d/1PJ9seviDyuurwLf25I_bYHxNbw_FNSzb/view"
-    },
-    {
-      "name": "qr-report-agent-mac-x64.dmg",
-      "sha256": "d2929f55e81eedda86d6ad5784474481cde251943fa36d4ab3be64967b16a41f",
-      "downloadUrl": "https://drive.google.com/file/d/1C7Fe6vldmsZwK_jCga3rD_MLwLBvuy2f/view"
+      "size": 127909419,
+      "sha256": "15399749574a4de92e948a71534b6bc69c2eb4ac43e2dafdc9edda3dd68aa2e3"
     },
     {
       "name": "qr-report-agent-windows-setup.exe",
-      "sha256": "77ad223bd6557a2984be3ceae4e2e349ae1f01ca6c9f77c0cee76241cec5c2c3",
-      "downloadUrl": "https://drive.google.com/file/d/1RsrmLKPmAPO9cuf8-x6gGLjdvAMD6uVL/view",
-      "version": "0.3.4",
-      "sourceUrl": "https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.3.4/qr-report-agent-windows-setup.exe"
-    },
-    {
-      "name": "qr-report-agent-linux-amd64.deb",
-      "sha256": "6e5a9c2dac66691da4801d2123a19bcb14b0690cb988d0b1db12c16adbe34963",
-      "downloadUrl": "https://drive.google.com/file/d/1n-bM7Srw94uoBFHqiaAp0TMOu7HK0w9p/view"
-    },
-    {
-      "name": "qr-report-agent-linux-arm64.deb",
-      "sha256": "b93a7535b3d2a7defc2af4aa8a3852797065e353b3b9b5c8f55f696dc57087ac",
-      "downloadUrl": "https://drive.google.com/file/d/1ji4TWLS2acc0jgpU9SfLYRYD1RoF-Ts1/view"
+      "size": 120978563,
+      "sha256": "7bb51e51ae20255a4bafd0067155a571e468df29e83b8d0f250f527e37e566fd"
     }
-  ]
+  ],
+  "baseUrl": "https://qa-report.mlbrg.ru/downloads"
 }

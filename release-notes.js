@@ -1,6 +1,20 @@
 // Newest release first. Add entries here; the dialog needs no UI changes.
 window.QaReportReleases = [
   {
+    "version": "0.6.0",
+    "date": "2026-09-09",
+    "changes": {
+      "new": [
+        "В локальном агенте можно сохранить несколько Jira; нужное подключение выбирается по ссылке задачи.",
+        "Агент проверяет обновления автоматически и позволяет установить их из своего окна без повторного скачивания приложения."
+      ],
+      "improvements": [
+        "Установщики доступны с сайта QA Report для macOS на Apple Silicon и Windows x64."
+      ],
+      "fixes": []
+    }
+  },
+  {
     version: "0.5.0",
     date: "2026-09-08",
     changes: {

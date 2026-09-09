@@ -956,7 +956,7 @@
           <section class="agent-desktop-setup">
             <div class="agent-brand"><span class="brand-mark" aria-hidden="true"></span><strong>Report <span>Agent</span></strong></div>
             <div class="agent-install-row"><span class="agent-step-label">Установка</span><div id="desktopAgentDownloads" aria-live="polite">Загрузка…</div></div>
-            <p class="agent-short-hint">Скачайте и установите один раз. Если агент уже установлен, переходите к подключению.</p>
+            <p class="agent-short-hint">macOS на M1 и новее или Windows x64. После установки обновления агента доступны в его окне.</p>
             <div class="agent-install-row"><span class="agent-step-label">Подключение</span><div class="agent-pairing-actions">
               <button class="button button-primary" id="prepareDesktopAgentButton" type="button">Подключить</button>
               <a class="button button-primary" id="launchDesktopAgentLink" hidden>Открыть агент</a>
@@ -970,7 +970,7 @@
           <div class="agent-test-row">
             <label class="field">
               <span>Адрес Jira</span>
-              <input id="agentJiraUrl" type="url" placeholder="https://jira.company.local" />
+              <input id="agentJiraUrl" type="url" list="agentJiraSuggestions" placeholder="https://jira.company.local" /><datalist id="agentJiraSuggestions"></datalist>
             </label>
             <button class="button button-secondary" id="testAgentJiraButton" type="button" disabled>Проверить Jira</button>
           </div>
@@ -980,7 +980,7 @@
             <div class="agent-guide-heading"><span>1</span><div><strong>Установите и запустите агент</strong><small>Откройте инструкцию для своей операционной системы.</small></div></div>
             <div class="agent-platform-list">
               <details class="agent-platform-card" data-agent-platform="macos">
-                <summary><span class="agent-platform-icon"></span><span><strong>macOS</strong><small>MacBook, iMac, Mac mini</small></span><span class="agent-summary-chevron">›</span></summary>
+                <summary><span class="agent-platform-icon"></span><span><strong>macOS · Apple Silicon</strong><small>M1 и новее</small></span><span class="agent-summary-chevron">›</span></summary>
                 <div class="agent-platform-content">
                   <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-macos.zip" download>Скачать агент для macOS</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
                   <ol><li>Установите Node.js LTS. После установки откройте «Терминал».</li><li>Подключите корпоративный VPN.</li><li>Скопируйте весь блок ниже в терминал и нажмите Enter.</li></ol>
@@ -994,7 +994,7 @@ chmod +x start.command
                 </div>
               </details>
               <details class="agent-platform-card" data-agent-platform="windows">
-                <summary><span class="agent-platform-icon">⊞</span><span><strong>Windows</strong><small>Windows 10 и 11</small></span><span class="agent-summary-chevron">›</span></summary>
+                <summary><span class="agent-platform-icon">⊞</span><span><strong>Windows x64</strong><small>64-разрядная версия</small></span><span class="agent-summary-chevron">›</span></summary>
                 <div class="agent-platform-content">
                   <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-windows.zip" download>Скачать агент для Windows</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
                   <ol><li>Установите Node.js LTS и перезапустите PowerShell.</li><li>Подключите VPN.</li><li>Откройте PowerShell, скопируйте блок и нажмите Enter. Новый агент автоматически использует доверенные сертификаты Windows.</li></ol>
@@ -1004,20 +1004,9 @@ cd .\qa-report-agent
 .\start.cmd</pre></div>
                 </div>
               </details>
-              <details class="agent-platform-card" data-agent-platform="linux">
-                <summary><span class="agent-platform-icon">◇</span><span><strong>Linux</strong><small>Ubuntu, Debian и другие</small></span><span class="agent-summary-chevron">›</span></summary>
-                <div class="agent-platform-content">
-                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-linux.zip" download>Скачать агент для Linux</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
-                  <ol><li>Установите Node.js 18 или новее.</li><li>Подключите VPN.</li><li>Скопируйте блок в терминал и нажмите Enter.</li></ol>
-                  <div class="agent-command"><button type="button" data-agent-copy-target="agentLinuxCommands">Скопировать</button><pre id="agentLinuxCommands">cd ~/Downloads
-unzip -o qa-report-agent-linux.zip
-cd qa-report-agent
-chmod +x start.sh
-./start.sh</pre></div>
-                </div>
-              </details>
+
             </div>
-            <div class="agent-node-check"><span>Проверка Node.js:</span><code id="agentNodeCheckCommand">node --version</code><button type="button" data-agent-copy-target="agentNodeCheckCommand">Скопировать</button><small>В ответе должно быть <b>v18</b> или новее.</small></div>
+            <div class="agent-node-check"><span>Проверка Node.js:</span><code id="agentNodeCheckCommand">node --version</code><button type="button" data-agent-copy-target="agentNodeCheckCommand">Скопировать</button><small>В ответе должно быть <b>v22</b> или новее.</small></div>
           </section>
 
           <section class="agent-guide-section">
@@ -1175,10 +1164,10 @@ chmod +x start.sh
     <script src="/checklist-selection.js?v=2"></script>
     <script src="/checklist-table.js?v=2"></script>
     <script src="/checklist-numbering.js?v=2"></script>
-    <script src="/release-notes.js?v=10"></script>
+    <script src="/release-notes.js?v=11"></script>
     <script src="/jira-attachment-reuse.js?v=1"></script>
     <script src="/attachment-import.js?v=4"></script>
-    <script src="/app.js?v=100"></script>
+    <script src="/app.js?v=101"></script>
     <script src="/local-import-client.js?v=1"></script>
   </body>
 </html>

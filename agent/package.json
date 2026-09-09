@@ -1,10 +1,10 @@
 {
   "name": "qr-report-agent",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "description": "Графический агент QA Report для подключения к Jira",
   "author": "QA Report",
   "private": true,
-  "main": "desktop/main.js",
+  "main": "bootstrap/main.js",
   "scripts": {
     "start": "electron .",
     "pack": "node build/run-builder.js --dir",
@@ -21,7 +21,9 @@
       "output": "dist"
     },
     "files": [
+      "bootstrap/**/*",
       "desktop/**/*",
+      "jira-profiles.js",
       "qa-report-agent.js",
       "package.json"
     ],
@@ -39,8 +41,7 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64",
-            "x64"
+            "arm64"
           ]
         }
       ],
@@ -53,8 +54,7 @@
         {
           "target": "nsis",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         }
       ],
@@ -67,21 +67,6 @@
       "runAfterFinish": true,
       "artifactName": "qr-report-agent-windows-setup.${ext}",
       "include": "build/installer.nsh"
-    },
-    "linux": {
-      "target": [
-        {
-          "target": "deb",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "category": "Utility",
-      "maintainer": "QA Report",
-      "executableName": "qr-report-agent",
-      "icon": "../icons/agent-512.png"
     },
     "beforePack": "./build/before-pack.js"
   },

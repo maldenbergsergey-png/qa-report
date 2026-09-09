@@ -9,7 +9,3 @@
 !macro customFiles_x64
   !insertmacro verifyAgentFiles
 !macroend
-
-!macro customFiles_arm64
-  !insertmacro verifyAgentFiles
-!macroend

@@ -1,0 +1,53 @@
+name: Build signed agent code update
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: Short user-facing release note
+        required: true
+        type: string
+      minimumVersion:
+        description: Minimum recommended agent version
+        default: '0.4.0'
+        required: true
+        type: string
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - run: npm ci
+        working-directory: agent
+      - run: npm run check
+      - run: npm test
+      - name: Build a signed package with the existing release key
+        env:
+          AGENT_RELEASE_SIGNING_KEY: ${{ secrets.AGENT_RELEASE_SIGNING_KEY }}
+          RELEASE_NOTE: ${{ inputs.notes }}
+          AGENT_MINIMUM_VERSION: ${{ inputs.minimumVersion }}
+        run: |
+          node - <<'JS'
+          const fs = require('node:fs'), path = require('node:path');
+          const { build } = require('./scripts/build-agent-update.cjs');
+          const file = path.join(process.env.RUNNER_TEMP, 'agent-release-key.pem');
+          if (!process.env.AGENT_RELEASE_SIGNING_KEY) throw new Error('Configure AGENT_RELEASE_SIGNING_KEY first');
+          fs.writeFileSync(file, process.env.AGENT_RELEASE_SIGNING_KEY, { mode: 0o600, flag: 'wx' });
+          build({ keyFile: file, directory: path.resolve('agent-releases'), minimumVersion: process.env.AGENT_MINIMUM_VERSION, notes: [process.env.RELEASE_NOTE] })
+            .then(result => console.log(JSON.stringify(result)))
+            .catch(error => { console.error(error.message); process.exitCode = 1; })
+            .finally(() => fs.rmSync(file, { force: true }));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qa-report-agent-code-update
+          if-no-files-found: error
+          path: |
+            agent-releases/latest.json
+            agent-releases/*.asar

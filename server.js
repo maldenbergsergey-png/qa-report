@@ -8,7 +8,7 @@ const { createLocalImportService } = require("./local-import-server");
 const { downloadJiraAttachment, listJiraAttachments } = require("./jira-attachment-transfer");
 
 const ROOT = __dirname;
-const agentRelease = require("./scripts/agent-release.json");
+const { releaseServer } = require("./agent-release-server");
 
 function loadLocalEnv() {
   const envPath = path.join(ROOT, ".env");
@@ -32,6 +32,8 @@ function loadLocalEnv() {
 }
 
 loadLocalEnv();
+const agentReleaseDirectory = path.resolve(process.env.AGENT_RELEASE_DIR || path.join(__dirname, "agent-releases"));
+const agentReleases = releaseServer(agentReleaseDirectory);
 
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -230,6 +232,7 @@ function getReportsDb() {
   `);
   const agentColumns = reportsDb.prepare("PRAGMA table_info(agent_devices)").all().map((column) => column.name);
   if (!agentColumns.includes("jira_base_url")) reportsDb.exec("ALTER TABLE agent_devices ADD COLUMN jira_base_url TEXT NOT NULL DEFAULT ''");
+  if (!agentColumns.includes("jira_base_urls")) reportsDb.exec("ALTER TABLE agent_devices ADD COLUMN jira_base_urls TEXT NOT NULL DEFAULT '[]'");
   if (!agentColumns.includes("theme")) reportsDb.exec("ALTER TABLE agent_devices ADD COLUMN theme TEXT NOT NULL DEFAULT 'system'");
   const columns = reportsDb.prepare("PRAGMA table_info(reports)").all().map((column) => column.name);
   if (!columns.includes("content_hash")) {
@@ -394,6 +397,7 @@ function agentPublicRecord(row) {
     createdAt: row.created_at,
     lastSeenAt,
     jiraBaseUrl: row.jira_base_url || "",
+    jiraBaseUrls: JSON.parse(row.jira_base_urls || "[]"),
     online: Boolean(lastSeenAt && Date.now() - Date.parse(lastSeenAt) < 45_000),
   };
 }
@@ -629,6 +633,15 @@ async function handleAgentPoll(request, response) {
       jiraBaseUrl = url.toString().replace(/\/$/, "").slice(0, 2000);
     }
     db.prepare("UPDATE agent_devices SET jira_base_url = ? WHERE id = ?").run(jiraBaseUrl, device.id);
+  }
+  if (Object.hasOwn(body, "jiraBaseUrls")) {
+    if (!Array.isArray(body.jiraBaseUrls) || body.jiraBaseUrls.length > 10) throw new Error("Некорректный список Jira");
+    const urls = body.jiraBaseUrls.map(value => {
+      const url = new URL(String(value));
+      if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.href.length > 2000) throw new Error("Некорректный адрес Jira");
+      return url.href.replace(/\/$/, "");
+    });
+    db.prepare("UPDATE agent_devices SET jira_base_urls = ? WHERE id = ?").run(JSON.stringify([...new Set(urls)]), device.id);
   }
   const reportedVersion = normalizeIdentityPart(body.version, "").slice(0, 30);
   if (reportedVersion && reportedVersion !== device.version) {
@@ -1841,18 +1854,9 @@ function serveStatic(request, response) {
     response.end("Forbidden");
     return;
   }
-  if (/^downloads\/qr-report-agent-[a-z0-9-]+\.(dmg|exe|deb)$/.test(relative)) {
-    fs.stat(filePath, (error, info) => {
-      if (error || !info.isFile()) { response.writeHead(404); response.end("Not found"); return; }
-      response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": info.size,
-        "Content-Disposition": `attachment; filename="${path.basename(filePath)}"`, "Cache-Control": "no-cache" });
-      if (request.method === "HEAD") { response.end(); return; }
-      const stream = fs.createReadStream(filePath);
-      stream.on("error", () => response.destroy());
-      response.on("close", () => stream.destroy());
-      stream.pipe(response);
-    });
-    return;
+  // Release files are exposed only through the explicit allowlisted download routes.
+  if (filePath === agentReleaseDirectory || filePath.startsWith(`${agentReleaseDirectory}${path.sep}`)) {
+    response.writeHead(404); response.end("Not found"); return;
   }
   fs.readFile(filePath, (error, data) => {
     if (error) {
@@ -1871,6 +1875,7 @@ function serveStatic(request, response) {
 const server = http.createServer(async (request, response) => {
   try {
     const requestPath = new URL(request.url, "http://localhost").pathname;
+    if (await agentReleases.handle(request, response, requestPath)) return;
     if (request.method === "POST" && requestPath === "/api/agent/preferences") {
       const owner = resolveReportOwner(request);
       const body = await readJson(request);
@@ -1881,18 +1886,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (request.method === "GET" && requestPath === "/api/agent/downloads") {
-      const candidates = [
-        ["mac-arm64", "macOS · Apple Silicon", "qr-report-agent-mac-arm64.dmg"],
-        ["mac-x64", "macOS · Intel", "qr-report-agent-mac-x64.dmg"],
-        ["windows", "Windows · x64 / ARM64", "qr-report-agent-windows-setup.exe"],
-        ["linux-x64", "Linux · Debian / Ubuntu x64", "qr-report-agent-linux-amd64.deb"],
-        ["linux-arm64", "Linux · Debian / Ubuntu ARM64", "qr-report-agent-linux-arm64.deb"],
-      ];
-      sendJson(response, 200, { downloads: candidates.map(([platform, label, filename]) => ({
-        platform, label,
-        url: agentRelease.files.find(file => file.name === filename)?.downloadUrl || `/downloads/${filename}`,
-        available: Boolean(agentRelease.files.find(file => file.name === filename)?.downloadUrl) || fs.existsSync(path.join(ROOT, "downloads", filename)),
-      })) });
+      sendJson(response, 200, { downloads: agentReleases.catalog() });
       return;
     }
     if (request.method === "GET" && requestPath === "/api/health") {

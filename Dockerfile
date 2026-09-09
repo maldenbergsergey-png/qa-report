@@ -8,13 +8,13 @@ ENV PORT=4173
 ENV REPORTS_DB_PATH=/app/reports-data/qa-report.sqlite
 
 COPY --chown=node:node package.json ./
-COPY --chown=node:node server.js app.js jira-markup-import.js checklist-selection.js checklist-table.js checklist-numbering.js release-notes.js index.html styles.css favicon.svg ./
+COPY --chown=node:node server.js agent-release-server.js app.js jira-markup-import.js checklist-selection.js checklist-table.js checklist-numbering.js release-notes.js index.html styles.css favicon.svg ./
 COPY --chown=node:node pwa.js sw.js manifest.webmanifest ./
 COPY --chown=node:node local-import-server.js jira-attachment-transfer.js attachment-import.js jira-attachment-reuse.js local-import-client.js ./
 COPY --chown=node:node icons ./icons
 COPY --chown=node:node downloads ./downloads
 COPY --chown=node:node scripts ./scripts
-RUN mkdir -p /app/feedback-data /app/reports-data && chown -R node:node /app/feedback-data /app/reports-data
+RUN mkdir -p /app/agent-releases /app/feedback-data /app/reports-data && chown -R node:node /app/feedback-data /app/reports-data
 
 USER node
 

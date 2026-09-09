@@ -1,0 +1,22 @@
+"use strict";
+const test = require("node:test"), assert = require("node:assert/strict");
+const fs = require("node:fs"), path = require("node:path"), os = require("node:os"), http = require("node:http");
+const { releaseServer } = require("../agent-release-server");
+test("the site serves only present supported artifacts, with streaming, range and traversal protection", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qa-release-server-"));
+  const service = releaseServer(dir);
+  assert.equal(service.catalog().length, 2); assert.equal(service.catalog()[0].available, false);
+  fs.writeFileSync(path.join(dir, "qr-report-agent-mac-arm64.dmg"), "0123456789");
+  fs.writeFileSync(path.join(dir, "latest.json"), '{"test":true}');
+  fs.writeFileSync(path.join(dir, "private.pem"), "secret");
+  fs.symlinkSync(path.join(dir, "private.pem"), path.join(dir, "qr-report-agent-code-0.4.1.asar"));
+  const server = http.createServer(async (req, res) => { if (!await service.handle(req, res, new URL(req.url, "http://localhost").pathname)) { res.writeHead(404); res.end(); } });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  assert.equal(service.catalog()[0].available, true); assert.equal(service.catalog()[1].available, false);
+  const result = await fetch(`${base}/downloads/qr-report-agent-mac-arm64.dmg`, { headers: { Range: "bytes=2-5" } });
+  assert.equal(result.status, 206); assert.equal(await result.text(), "2345");
+  assert.equal((await fetch(`${base}/agent-updates/latest.json`)).headers.get("cache-control"), "no-store");
+  for (const url of ["/agent-updates/private.pem", "/agent-updates/qr-report-agent-code-0.4.1.asar", "/agent-updates/%2e%2e/private.pem", "/downloads/qr-report-agent-linux-amd64.deb", "/downloads/qr-report-agent-mac-x64.dmg"]) assert.equal((await fetch(base + url)).status, 404);
+});

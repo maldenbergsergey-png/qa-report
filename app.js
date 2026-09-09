@@ -7147,11 +7147,14 @@ async function refreshAgentStatus() {
     const result = await reportApi("/api/agent/status");
     const active = result.devices?.find((device) => device.online);
     if (active) {
-      if (active.jiraBaseUrl) {
-        elements.agentJiraUrl.value = active.jiraBaseUrl;
-        if (jiraSettings.baseUrl !== active.jiraBaseUrl || jiraSettings.transport !== "agent") {
-          jiraSettings = { ...jiraSettings, baseUrl: active.jiraBaseUrl, transport: "agent",
-            type: new URL(active.jiraBaseUrl).hostname.endsWith(".atlassian.net") ? "cloud" : "data-center" };
+      const urls = active.jiraBaseUrls?.length ? active.jiraBaseUrls : active.jiraBaseUrl ? [active.jiraBaseUrl] : [];
+      const chosen = urls.includes(jiraSettings.baseUrl) ? jiraSettings.baseUrl : urls[0];
+      const suggestions = document.getElementById("agentJiraSuggestions");
+      suggestions.replaceChildren(...urls.map(url => { const option = document.createElement("option"); option.value = url; return option; }));
+      if (chosen && document.activeElement !== elements.agentJiraUrl) {
+        elements.agentJiraUrl.value = chosen;
+        if (jiraSettings.baseUrl !== chosen || jiraSettings.transport !== "agent") {
+          jiraSettings = { ...jiraSettings, baseUrl: chosen, transport: "agent", type: new URL(chosen).hostname.endsWith(".atlassian.net") ? "cloud" : "data-center" };
           localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
         }
       }
@@ -7159,7 +7162,7 @@ async function refreshAgentStatus() {
       setAgentConnectionState({
         connected: true,
         title: active.name || "Локальный агент подключён",
-        detail: `Подключён · версия ${active.version}`,
+        detail: `Подключён · версия ${active.version}${urls.length > 1 ? ` · Jira: ${urls.length}` : ""}`,
       });
       return true;
     }
@@ -7205,11 +7208,11 @@ async function loadDesktopAgentDownloads() {
       option.disabled = !item.available; select.append(option);
     }
     const platform = String(navigator.userAgentData?.platform || navigator.platform).toLowerCase();
-    const preferred = platform.includes("win") ? "windows" : platform.includes("linux") ? "linux" : "mac";
+    const preferred = platform.includes("win") ? "windows" : "mac";
     const selected = result.downloads.find(item => item.available && item.platform.startsWith(preferred)) || result.downloads.find(item => item.available);
     const download = document.createElement("a");
     download.className = "button button-secondary"; download.textContent = "Скачать";
-    download.target = "_blank"; download.rel = "noopener noreferrer";
+    download.setAttribute("download", "");
     if (selected) { select.value = selected.url; download.href = selected.url; }
     else { download.textContent = "Нет сборок"; select.disabled = true; }
     select.addEventListener("change", () => { download.href = select.value; });
@@ -8011,6 +8014,12 @@ document.querySelectorAll("[data-agent-copy-target]").forEach((button) => {
     }
     writeClipboardText(String(value).trim(), "Скопировано");
   });
+});
+elements.agentJiraUrl.addEventListener("change", () => {
+  const baseUrl = elements.agentJiraUrl.value.trim().replace(/\/+$/, "");
+  if (![...document.getElementById("agentJiraSuggestions").options].some(option => option.value === baseUrl)) return;
+  jiraSettings = { ...jiraSettings, baseUrl, transport: "agent", type: new URL(baseUrl).hostname.endsWith(".atlassian.net") ? "cloud" : "data-center" };
+  localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
 });
 elements.testAgentJiraButton.addEventListener("click", testJiraThroughAgent);
 elements.previewButton.addEventListener("click", openPreview);

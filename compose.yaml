@@ -13,6 +13,7 @@ services:
       PORT: 4173
       FEEDBACK_DIR: /app/feedback-data
       REPORTS_DB_PATH: /app/reports-data/qa-report.sqlite
+      AGENT_RELEASE_DIR: /app/agent-releases
       RESEND_API_KEY_FILE: /run/secrets/resend_api_key
       FEEDBACK_TO_EMAIL: ${FEEDBACK_TO_EMAIL:-}
       FEEDBACK_FROM_EMAIL: ${FEEDBACK_FROM_EMAIL:-}
@@ -21,6 +22,7 @@ services:
     volumes:
       - feedback_data:/app/feedback-data
       - reports_data:/app/reports-data
+      - ./agent-releases:/app/agent-releases:ro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s

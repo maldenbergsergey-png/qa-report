@@ -25,3 +25,6 @@ build
 downloads/qr-report-agent-*.dmg
 downloads/qr-report-agent-*.exe
 downloads/qr-report-agent-*.deb
+
+# Only public artifacts; signing keys must stay outside the repository.
+agent-releases/
