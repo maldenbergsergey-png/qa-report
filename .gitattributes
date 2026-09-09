@@ -1,2 +1,3 @@
-# Preserve release bytes on every OS, including JSON/ASAR transport parts.
-agent-bundles/*.part-* binary
+# Preserve signed update bytes on every OS.
+agent-update-feed/*.asar binary
+agent-update-feed/latest.json -text

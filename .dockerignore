@@ -20,3 +20,8 @@ agent/node_modules
 agent/dist
 
 agent-releases
+
+# Full installers are downloaded from GitHub Releases, never bundled in the site.
+downloads/*.dmg
+downloads/*.exe
+downloads/*.deb

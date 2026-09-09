@@ -12,5 +12,5 @@
       "sha256": "7bb51e51ae20255a4bafd0067155a571e468df29e83b8d0f250f527e37e566fd"
     }
   ],
-  "baseUrl": "https://qa-report.mlbrg.ru/downloads"
+  "baseUrl": "https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0"
 }

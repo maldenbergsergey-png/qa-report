@@ -32,7 +32,7 @@ function loadLocalEnv() {
 }
 
 loadLocalEnv();
-const agentReleaseDirectory = path.resolve(process.env.AGENT_RELEASE_DIR || path.join(__dirname, "agent-releases"));
+const agentReleaseDirectory = path.resolve(process.env.AGENT_RELEASE_DIR || path.join(__dirname, "agent-update-feed"));
 const agentReleases = releaseServer(agentReleaseDirectory);
 
 const PORT = Number(process.env.PORT || 4173);
@@ -1855,7 +1855,8 @@ function serveStatic(request, response) {
     return;
   }
   // Release files are exposed only through the explicit allowlisted download routes.
-  if (filePath === agentReleaseDirectory || filePath.startsWith(`${agentReleaseDirectory}${path.sep}`)) {
+  const releaseDirectories = [agentReleaseDirectory, path.join(__dirname, "agent-releases"), path.join(__dirname, "agent-update-feed")];
+  if (releaseDirectories.some(directory => filePath === directory || filePath.startsWith(`${directory}${path.sep}`))) {
     response.writeHead(404); response.end("Not found"); return;
   }
   fs.readFile(filePath, (error, data) => {

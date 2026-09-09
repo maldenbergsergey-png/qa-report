@@ -7204,7 +7204,7 @@ async function loadDesktopAgentDownloads() {
     select.setAttribute("aria-label", "Платформа агента");
     for (const item of result.downloads) {
       const option = document.createElement("option");
-      option.value = item.url; option.textContent = item.label;
+      option.value = item.url; option.textContent = item.version ? `${item.label} · ${item.version}` : item.label;
       option.disabled = !item.available; select.append(option);
     }
     const platform = String(navigator.userAgentData?.platform || navigator.platform).toLowerCase();
@@ -7212,7 +7212,8 @@ async function loadDesktopAgentDownloads() {
     const selected = result.downloads.find(item => item.available && item.platform.startsWith(preferred)) || result.downloads.find(item => item.available);
     const download = document.createElement("a");
     download.className = "button button-secondary"; download.textContent = "Скачать";
-    download.setAttribute("download", "");
+    download.target = "_blank"; download.rel = "noopener noreferrer";
+    download.title = "Скачать установщик QA Report Agent с GitHub";
     if (selected) { select.value = selected.url; download.href = selected.url; }
     else { download.textContent = "Нет сборок"; select.disabled = true; }
     select.addEventListener("change", () => { download.href = select.value; });
