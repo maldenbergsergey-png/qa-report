@@ -440,6 +440,7 @@ async function jiraFetch(connection, pathname, options = {}) {
     signal: fetchOptions.signal || AbortSignal.timeout(60_000),
   });
   const text = await response.text();
+  if (response.status === 413) throw Object.assign(new Error("Jira или её прокси отклонили загрузку по размеру (HTTP 413). Проверьте лимит вложений Jira и её прокси."), { status: 413 });
   const contentType = response.headers.get("content-type") || "";
   if (/text\/html/i.test(contentType) || /^\s*(?:<!doctype|<html|<head)/i.test(text)) {
     const error = new Error(`Jira вернула страницу SSO/WAF вместо REST API (HTTP ${response.status}). Обновите cookie через Copy as cURL.`);
@@ -519,6 +520,15 @@ async function executeJiraComment(config, payload) {
   };
 }
 
+async function jiraAttachmentLimits(connection) {
+  try {
+    const version = connection.type === "cloud" ? "3" : "2";
+    const meta = await jiraFetch(connection, `/rest/api/${version}/attachment/meta`, { signal: AbortSignal.timeout(8000) });
+    return { jiraEnabled: typeof meta?.enabled === "boolean" ? meta.enabled : null,
+      jiraUploadLimit: Number.isSafeInteger(meta?.uploadLimit) && meta.uploadLimit >= 0 ? meta.uploadLimit : null };
+  } catch { return { jiraEnabled: null, jiraUploadLimit: null }; }
+}
+
 async function executeJiraAttachments(config, payload) {
   const connection = configuredJira(config, payload);
   const { issueKey } = issueReference(connection, payload.issueUrl);
@@ -526,6 +536,12 @@ async function executeJiraAttachments(config, payload) {
   if (!files.length) return { ok: true, attachments: [] };
   if (files.length > 20) throw new Error("За один раз разрешено не более 20 вложений");
   const version = connection.type === "cloud" ? "3" : "2";
+  const limits = await jiraAttachmentLimits(connection);
+  if (limits.jiraEnabled === false) throw new Error("В этой Jira отключены вложения. Обратитесь к администратору Jira.");
+  for (const file of files) {
+    const size = Buffer.from(String(file.dataBase64 || ""), "base64").length;
+    if (limits.jiraUploadLimit !== null && size > limits.jiraUploadLimit) throw new Error(`Файл «${file.name}» (${size} байт) превышает лимит Jira: ${limits.jiraUploadLimit} байт на один файл.`);
+  }
   const existing = await listJiraAttachments({ connection, issueKey, jiraFetch });
   const usedNames = new Set(existing.map(file => String(file.filename).toLowerCase()));
   const results = [];
@@ -585,7 +601,8 @@ async function executeJiraAttachmentManifest(config, payload) {
   const connection = configuredJira(config, payload);
   const { issueKey } = issueReference(connection, payload.issueUrl);
   return { ok: true, attachmentReuse: true, issueUrl: `${connection.baseUrl}/browse/${encodeURIComponent(issueKey)}`,
-    attachments: await listJiraAttachments({ connection, issueKey, jiraFetch }) };
+    attachmentLimits: await jiraAttachmentLimits(connection),
+    attachments: payload.limitsOnly ? [] : await listJiraAttachments({ connection, issueKey, jiraFetch }) };
 }
 
 async function executeJiraImportAttachment(config, payload) {
@@ -740,4 +757,4 @@ if (require.main === module) {
 }
 
 module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl, normalizeServerUrl,
-  executeJiraAttachmentManifest, executeJiraImportAttachment, executeJiraImportComment, configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };
+  executeJiraAttachments, executeJiraAttachmentManifest, executeJiraImportAttachment, executeJiraImportComment, configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };

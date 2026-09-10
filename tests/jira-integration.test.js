@@ -7,6 +7,8 @@ const path = require("node:path");
 
 async function main() {
   const received = [];
+  let attachmentMeta = { enabled: true, uploadLimit: 1204756 };
+  let rejectUpload = false;
   let fallbackCommentCreated = false;
   let wafPostAttempted = false;
   const mock = http.createServer(async (request, response) => {
@@ -64,6 +66,12 @@ async function main() {
     if (request.url === "/rest/api/2/issue/QA-789/comment?maxResults=100") {
       response.end(JSON.stringify({ total: 0, comments: [] }));
       return;
+    }
+    if (/\/rest\/api\/[23]\/attachment\/meta$/.test(request.url)) {
+      response.end(JSON.stringify(attachmentMeta)); return;
+    }
+    if (rejectUpload && request.url.endsWith("/attachments")) {
+      response.writeHead(413, { "Content-Type": "text/html" }); response.end("<html>413 too large</html>"); return;
     }
     if (request.url.endsWith("/myself")) {
       response.end(JSON.stringify({ displayName: "QA Tester", name: "qa" }));
@@ -308,6 +316,39 @@ async function main() {
     assert.equal(attachmentResponse.status, 200);
     assert.equal((await attachmentResponse.json()).attachments[0].attachmentId, "local-1");
     assert.match(received.find(item=>item.url.endsWith("/attachments")).body.toString(), /filename="shot.png"/);
+
+    const uploadFixture = (files) => fetch(`${appOrigin}/api/jira/attachments`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "data-center", baseUrl: "http://127.0.0.1:4199", token: "fixture", issueUrl: `http://127.0.0.1:4199/browse/QA-123`, files }),
+    });
+    const videoBytes = Buffer.alloc(1204756, 0x82);
+    const clip = { attachmentId: "video-local", name: "clip.mp4", type: "video/mp4", dataBase64: videoBytes.toString("base64") };
+    const videoResponse = await uploadFixture([clip]);
+    assert.equal(videoResponse.status, 200, await videoResponse.clone().text());
+    const sentVideo = received.filter(item => item.url.endsWith("/attachments")).at(-1);
+    assert.ok(sentVideo.body.includes(videoBytes), "Jira receives exactly the original video bytes, not base64");
+    const uploadCount = () => received.filter(item => item.url.endsWith("/attachments")).length;
+    const beforeLimit = uploadCount();
+    attachmentMeta.uploadLimit = 1204755;
+    const oversized = await uploadFixture([{ ...clip, name: "small.txt", dataBase64: "eA==" }, clip]);
+    assert.equal(oversized.status, 413);
+    assert.match((await oversized.json()).error, /лимит Jira/);
+    assert.equal(uploadCount(), beforeLimit, "whole batch is checked before the first upload");
+    attachmentMeta = { enabled: false, uploadLimit: 1204756 };
+    const disabled = await uploadFixture([clip]);
+    assert.equal(disabled.status, 403);
+    assert.equal((await disabled.json()).errorCode, "ATTACHMENT_LIMIT");
+    assert.equal(uploadCount(), beforeLimit);
+    attachmentMeta = { enabled: true, uploadLimit: 1204756 };
+    rejectUpload = true;
+    const jiraProxyError = await uploadFixture([clip]);
+    assert.equal(jiraProxyError.status, 413);
+    const jiraProxyPayload = await jiraProxyError.json();
+    assert.equal(jiraProxyPayload.errorCode, "JIRA_PAYLOAD_TOO_LARGE");
+    assert.match(jiraProxyPayload.error, /clip.mp4/);
+    rejectUpload = false;
+    const svg = await uploadFixture([{ name: "diagram.svg", type: "image/svg+xml", dataBase64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString("base64") }]);
+    assert.equal(svg.status, 200, await svg.clone().text());
 
     const reportDocument = {
       reportId: "server-report-1",
