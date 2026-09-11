@@ -1,6 +1,17 @@
 // Newest release first. Add entries here; the dialog needs no UI changes.
 window.QaReportReleases = [
   {
+    version: "0.7.0",
+    date: "2026-09-11",
+    changes: {
+      new: [],
+      improvements: [
+        "Приём от ИИ открывается компактной кнопкой с роботом и статусом ON/OFF; активная сессия отмечена мягким зелёным свечением."
+      ],
+      fixes: []
+    }
+  },
+  {
     "version": "0.6.0",
     "date": "2026-09-09",
     "changes": {
