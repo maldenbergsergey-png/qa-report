@@ -3109,6 +3109,11 @@ function extractCodeText(node) {
   return output.replace(/\u00a0/g, " ").replace(/\n+$/, "");
 }
 
+function escapeWikiNotEquals(value, protect = value => value) {
+  // Protect generated escapes from the later table-cell backslash conversion.
+  return value.replace(/!=/g, () => protect("\\!="));
+}
+
 function htmlToWiki(html, {protect = value => value} = {}) {
   const container = document.createElement("div");
   container.innerHTML = html || "";
@@ -3139,7 +3144,7 @@ function htmlToWiki(html, {protect = value => value} = {}) {
     return output;
   }
   function walk(node) {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    if (node.nodeType === Node.TEXT_NODE) return escapeWikiNotEquals(node.textContent, protect);
     if (node.nodeType !== Node.ELEMENT_NODE) return "";
     if (node.matches?.("[data-editor-ui]")) return "";
     if (node.matches?.(".cell-file")) return protect(fileCardToWiki(node));
@@ -3439,7 +3444,7 @@ function generateMarkup(options = {}) {
   const heading = [];
   const overallColor = STATUS_META[draft.overallStatus].jiraColor;
   heading.push(
-    `*Проверено на ${draft.environment}*`,
+    `*Проверено на ${escapeWikiNotEquals(draft.environment)}*`,
     `{color:${overallColor}}*ТЕСТ — ${draft.overallStatus}*{color}`,
   );
   blocks.push(heading.join("\n"));
@@ -3449,9 +3454,9 @@ function generateMarkup(options = {}) {
   sectionsForPublication(sectionIds, draft, statuses).forEach((section) => {
     const rows = section.rows.filter(hasRowContent);
     if (!rows.length) return;
-    const lines = [`h2. ${ChecklistNumbering.sectionTitle(draft, section)}`];
+    const lines = [`h2. ${escapeWikiNotEquals(ChecklistNumbering.sectionTitle(draft, section))}`];
     lines.push(
-      `||${["Номер", ...section.columns.map((column) => column.title || "Без названия"), "Статус"].join("||")}||`,
+      `||${["Номер", ...section.columns.map((column) => escapeWikiNotEquals(column.title || "Без названия")), "Статус"].join("||")}||`,
     );
     rows.forEach((row) => {
       const values = section.columns.map((column) => jiraCell(row.cells[column.id] || ""));
