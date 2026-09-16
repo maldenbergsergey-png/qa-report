@@ -11,10 +11,10 @@ QA Report Connect **0.4.1**, ядро CLI **0.3.0**. Поддерживаютс�
 
 ## Установка и подключение
 
-1. В QA Report откройте «Агент» и скачайте установщик своей платформы с сайта приложения.
+1. В QA Report откройте «Настройки подключения» и скачайте установщик QA Report Connect своей платформы.
 2. На Mac перенесите приложение из DMG в Applications. На Windows запустите EXE.
 3. Для перехода с 0.3.x сначала завершите старый процесс через меню в трее.
-   Однократная установка 0.4.0 добавит механизм дальнейших обновлений.
+   Однократная установка 0.4.1 добавит механизм дальнейших обновлений.
 4. В QA Report нажмите «Подключить», откройте агент и подтвердите адрес сайта.
 5. Добавьте Jira: PAT, логин/API token или Copy as cURL из авторизованной вкладки Jira.
    Настройки сохраняются только после успешной проверки доступа.
@@ -124,10 +124,10 @@ node scripts/build-agent-update.cjs /path/to/release/site
 ## Скачивание через GitHub Releases
 
 Два установщика опубликованы в выпуске
-[Установщики 0.4.0](https://github.com/maldenbergsergey-png/qa-report/releases/tag/agent-v0.4.0):
+[QA Report Connect 0.4.1](https://github.com/maldenbergsergey-png/qa-report/releases/tag/agent-v0.4.1):
 
-- `qa-report-agent-0.4.0-mac-arm64.dmg`;
-- `qa-report-agent-0.4.0-windows-x64.exe`.
+- `qa-report-agent-0.4.1-mac-arm64.dmg`;
+- `qa-report-agent-0.4.1-windows-x64.exe`.
 
 Для скачивания без входа в GitHub репозиторий и релиз должны быть публичными.
 Приватный репозиторий возвращает 404 пользователю без доступа, даже когда

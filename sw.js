@@ -1,6 +1,6 @@
 // Bump this version whenever a shell asset changes. A new worker waits until
 // all old app windows close, so an editing session never mixes shell versions.
-const CACHE_NAME = "qa-report-shell-v43";
+const CACHE_NAME = "qa-report-shell-v44";
 const SHELL = [
   "/agent/jira-headers.js?v=1",
   "/attachment-limits.js?v=1",
@@ -11,7 +11,7 @@ const SHELL = [
   "/icons/brand-light.png?v=2", "/icons/brand-dark.png",
   "/", "/styles.css?v=99", "/app.js?v=106", "/pwa.js?v=2",
   "/jira-markup-import.js?v=6", "/checklist-selection.js?v=2",
-  "/checklist-numbering.js?v=2", "/release-notes.js?v=20",
+  "/checklist-numbering.js?v=2", "/release-notes.js?v=21",
   "/favicon.svg?v=2", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png",
 ];
 

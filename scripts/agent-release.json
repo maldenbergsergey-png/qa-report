@@ -1,16 +1,16 @@
 {
-  "version": "0.4.0",
+  "version": "0.4.1",
   "files": [
     {
-      "name": "qa-report-agent-0.4.0-mac-arm64.dmg",
-      "size": 127909419,
-      "sha256": "15399749574a4de92e948a71534b6bc69c2eb4ac43e2dafdc9edda3dd68aa2e3"
+      "name": "qa-report-agent-0.4.1-mac-arm64.dmg",
+      "size": 127809974,
+      "sha256": "de04b363de710000d1eaeb63f3cc18fc802c631c952c66c4fe4941cdf003f209"
     },
     {
-      "name": "qa-report-agent-0.4.0-windows-x64.exe",
-      "size": 120978563,
-      "sha256": "7bb51e51ae20255a4bafd0067155a571e468df29e83b8d0f250f527e37e566fd"
+      "name": "qa-report-agent-0.4.1-windows-x64.exe",
+      "size": 120825667,
+      "sha256": "d8392f7e160ee86af50d8ddbc06251527a634b8cee062fc195cb357a403663ff"
     }
   ],
-  "baseUrl": "https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0"
+  "baseUrl": "https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.1"
 }

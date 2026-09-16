@@ -49,10 +49,10 @@ async function main() {
     return url.origin === origin ? route.continue() : route.abort();
   });
   const urls = ['https://jira-one.example.test', 'https://jira-two.example.test/jira'];
-  await page.route('**/api/agent/status', route => route.fulfill({ json: { devices: [{ online:true, name:'QA Agent', version:'0.4.0', jiraBaseUrl:urls[0], jiraBaseUrls:urls }] } }));
+  await page.route('**/api/agent/status', route => route.fulfill({ json: { devices: [{ online:true, name:'QA Agent', version:'0.4.1', jiraBaseUrl:urls[0], jiraBaseUrls:urls }] } }));
   await page.route('**/api/agent/downloads', route => route.fulfill({ json: { downloads: [
-    { platform:'mac-arm64', label:'macOS · Apple Silicon', version:'0.4.0', url:'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0/qa-report-agent-0.4.0-mac-arm64.dmg', available:true },
-    { platform:'windows', label:'Windows · x64', version:'0.4.0', url:'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0/qa-report-agent-0.4.0-windows-x64.exe', available:true }
+    { platform:'mac-arm64', label:'macOS · Apple Silicon', version:'0.4.1', url:'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.1/qa-report-agent-0.4.1-mac-arm64.dmg', available:true },
+    { platform:'windows', label:'Windows · x64', version:'0.4.1', url:'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.1/qa-report-agent-0.4.1-windows-x64.exe', available:true }
   ] } }));
   await page.goto(origin); await page.waitForSelector('#jiraMenuButton');
   const jiraRequests = [];
@@ -98,12 +98,12 @@ async function main() {
   await page.waitForFunction(() => document.querySelector('#agentJiraSuggestions').options.length === 2);
   assert.equal(await page.locator('#agentJiraUrl').inputValue(),urls[1]);
   const download = await page.locator('#desktopAgentDownloads a').getAttribute('href');
-  assert.equal(download, 'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0/qa-report-agent-0.4.0-mac-arm64.dmg');
-  await page.locator('#desktopAgentDownloads select').selectOption('https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0/qa-report-agent-0.4.0-windows-x64.exe');
-  assert.equal(await page.locator('#desktopAgentDownloads a').getAttribute('href'), 'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0/qa-report-agent-0.4.0-windows-x64.exe');
+  assert.equal(download, 'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.1/qa-report-agent-0.4.1-mac-arm64.dmg');
+  await page.locator('#desktopAgentDownloads select').selectOption('https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.1/qa-report-agent-0.4.1-windows-x64.exe');
+  assert.equal(await page.locator('#desktopAgentDownloads a').getAttribute('href'), 'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.1/qa-report-agent-0.4.1-windows-x64.exe');
   assert.equal(await page.locator('#desktopAgentDownloads a').getAttribute('target'), '_blank');
   assert.equal(await page.locator('#desktopAgentDownloads a').getAttribute('rel'), 'noopener noreferrer');
-  assert.match(await page.locator('#desktopAgentDownloads select').textContent(), /0\.4\.0/);
+  assert.match(await page.locator('#desktopAgentDownloads select').textContent(), /0\.4\.1/);
   if (output) { fs.mkdirSync(output,{recursive:true}); await page.screenshot({path:path.join(output,'agent-web.png'),fullPage:true}); }
   assert.deepEqual(errors,[]);
   console.log('PASS: two supported download targets, two Jira suggestions, selection survives polling and reload.');
