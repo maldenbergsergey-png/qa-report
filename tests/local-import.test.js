@@ -101,10 +101,19 @@ test("Jira file markers and image markers retain their own cells, including esca
 });
 function client() {
   const ctx=vm.createContext({crypto:crypto.webcrypto,TextEncoder,Uint8Array});
+  vm.runInContext(fs.readFileSync(require.resolve("../jira-markup-import.js"),"utf8"),ctx);
   vm.runInContext(fs.readFileSync(require.resolve("../attachment-import.js"),"utf8"),ctx);
   vm.runInContext(fs.readFileSync(require.resolve("../local-import-client.js"),"utf8"),ctx);
   return ctx;
 }
+test("AI cell text repairs Windows encoding before escaping HTML without changing the original hash", async () => {
+  const ctx=client();const doc={sections:[{id:"s",columns:[{id:"actual"}],rows:[{id:"r",status:"НЕ ПРОВЕРЕНО",cells:{actual:"Before"}}]}]};
+  const expectedHash=await ctx.QaLocalImport.cellHash("Before","НЕ ПРОВЕРЕНО");
+  const text=new TextDecoder("windows-1251").decode(new TextEncoder().encode('Проверено <img src=x onerror=alert(1)>'));
+  const result=await ctx.QaLocalImport.applyCells(doc,[{sectionId:"s",rowId:"r",columnId:"actual",expectedHash,text}],new Map());
+  assert.equal(result.sections[0].rows[0].cells.actual,'<p>Проверено &lt;img src=x onerror=alert(1)&gt;</p>');
+  assert.equal(doc.sections[0].rows[0].cells.actual,"Before");
+});
 test("cell updates preserve other columns, attach actual bytes, escape text and reject stale hashes atomically",async()=>{
   const ctx=client();const doc={sections:[{id:"s",columns:[{id:"expected"},{id:"actual"}],rows:[{id:"r",status:"НЕ ПРОВЕРЕНО",cells:{expected:"Expected",actual:"Before"}}]}]};
   const hash=await ctx.QaLocalImport.cellHash("Before","НЕ ПРОВЕРЕНО");

@@ -540,6 +540,18 @@ async function main() {
     assert.equal(checklistPayload.issueKey, "https://company.atlassian.net/browse/ADVINTAUT2-117");
     assert.equal(checklistPayload.content.includes("Отображение кнопки Export"), true);
 
+    const misreadWindows = value => new TextDecoder("windows-1251").decode(new TextEncoder().encode(value));
+    const originalMarkup = "Окружение: DEV\n||Номер||Проверка||Статус||\n|1.|Проверить фильтры|НЕ ОК|";
+    const repairedResponse = await fetch(`${appOrigin}/api/checklists/import`, {
+      method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ format: "jira", title: misreadWindows("Проверка фильтров"), content: misreadWindows(originalMarkup) }),
+    });
+    assert.equal(repairedResponse.status, 201);
+    const repairedImport = await repairedResponse.json();
+    const repairedPayload = await (await fetch(`${appOrigin}/api/checklists/import/${repairedImport.checklistId}`)).json();
+    assert.equal(repairedPayload.content, originalMarkup);
+    assert.equal(repairedPayload.title, "Проверка фильтров");
+
     const heavyReportResponse = await fetch(`${appOrigin}/api/reports`, {
       method: "POST",
       headers: {

@@ -16,7 +16,7 @@
       const original = value.sections.find(item => item.id === update.sectionId).rows.find(item => item.id === update.rowId);
       if (update.expectedHash !== await cellHash(original.cells[update.columnId], original.status)) throw new Error("Ячейка изменилась после получения контекста. Получите новый контекст и повторите пакет");
       if (update.text !== undefined) {
-        const text = `<p>${escape(update.text).replace(/\r?\n/g,"<br>") || "<br>"}</p>`;
+        const text = `<p>${escape(root.QaReportJiraImport.repairImportText(update.text)).replace(/\r?\n/g,"<br>") || "<br>"}</p>`;
         row.cells[update.columnId] = update.mode === "append" ? row.cells[update.columnId] + text : text;
       }
       for (const id of update.attachmentIds || []) {
@@ -96,7 +96,7 @@
       });
       if (localized.errors.length) throw new Error(localized.errors.join("; "));
       candidate = importedDraftInCurrentReport(localized.document);
-      if (batch.title && candidate.sections[0]) candidate.sections[0].title = stripSectionNumber(String(batch.title));
+      if (batch.title && candidate.sections[0]) candidate.sections[0].title = stripSectionNumber(root.QaReportJiraImport.repairImportText(batch.title));
     } else candidate = await applyCells(draft, batch.updates, files);
     if (session !== current || draft.reportId !== current.reportId) throw new Error("Сессия отчёта изменилась");
     // Verify again with editing frozen; no keystroke can be lost during the IndexedDB transaction.
@@ -170,7 +170,7 @@
   stop.addEventListener("click", () => { endSession(); start.focus(); });
   copy.addEventListener("click", async () => {
     if (!session) return;
-    const instruction = `Заполни открытый отчёт QA Report через временный API. Подключение:\n${JSON.stringify(session.connection, null, 2)}\n\nИспользуй заголовок X-QA-Import-Token: token.\nGET url/context возвращает строки, столбцы и hash каждой ячейки.\nPUT url/files/<уникальный-id> принимает байты файла; X-QA-File-Name — имя в encodeURIComponent, Content-Type — MIME-тип.\nPOST url/batches принимает JSON {id, kind:"cells", updates:[{sectionId,rowId,columnId,expectedHash,text,attachmentIds:["id-файла"]}]}. expectedHash берётся из контекста. text заменяет содержимое ячейки; mode:"append" дописывает. attachmentIds без text добавляет файлы к существующему тексту. status необязателен.\nДля полного чек-листа: {id,kind:"checklist",format:"jira",content:"разметка",attachmentIds:["id-файла"]}; ссылки на вложения: !имя.png! и [^имя.pdf].\nGET url/batches/<id> возвращает pending, saved или rejected. Успех — только saved: браузер подтвердил сохранение. Повтор POST с тем же id и содержимым безопасен. При изменении содержимого используй новый id.\nЗагружай реальные файлы бинарными запросами; не генерируй Base64. Сессия временная, предназначена только для этого отчёта.`;
+    const instruction = `Заполни открытый отчёт QA Report через временный API. Подключение:\n${JSON.stringify(session.connection, null, 2)}\n\nИспользуй заголовок X-QA-Import-Token: token.\nGET url/context возвращает строки, столбцы и hash каждой ячейки.\nPUT url/files/<уникальный-id> принимает байты файла; X-QA-File-Name — имя в encodeURIComponent, Content-Type — MIME-тип.\nJSON отправляй в UTF-8 с Content-Type: application/json; charset=utf-8. В Windows PowerShell читай файлы через Get-Content -Raw -Encoding UTF8 и передавай тело как [System.Text.Encoding]::UTF8.GetBytes($json). Перед отправкой проверь читаемость русских слов в content и text.\nPOST url/batches принимает JSON {id, kind:"cells", updates:[{sectionId,rowId,columnId,expectedHash,text,attachmentIds:["id-файла"]}]}. expectedHash берётся из контекста. text заменяет содержимое ячейки; mode:"append" дописывает. attachmentIds без text добавляет файлы к существующему тексту. status необязателен.\nДля полного чек-листа: {id,kind:"checklist",format:"jira",content:"разметка",attachmentIds:["id-файла"]}; ссылки на вложения: !имя.png! и [^имя.pdf].\nGET url/batches/<id> возвращает pending, saved или rejected. Успех — только saved: браузер подтвердил сохранение. Повтор POST с тем же id и содержимым безопасен. При изменении содержимого используй новый id.\nЗагружай реальные файлы бинарными запросами; не генерируй Base64. Сессия временная, предназначена только для этого отчёта.`;
     try { await navigator.clipboard.writeText(instruction); showToast("Подключение и инструкции для агента скопированы"); }
     catch { message("Не удалось скопировать подключение. Разрешите доступ к буферу обмена"); }
   });

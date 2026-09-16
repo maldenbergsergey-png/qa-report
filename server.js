@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
-const { parseJiraMarkup } = require("./jira-markup-import");
+const { parseJiraMarkup, repairImportText } = require("./jira-markup-import");
 const { createLocalImportService } = require("./local-import-server");
 const { downloadJiraAttachment, listJiraAttachments } = require("./jira-attachment-transfer");
 
@@ -1415,9 +1415,9 @@ async function handleChecklistImport(request, response) {
     publicId,
     source: String(body.source || "").slice(0, 120),
     format: "jira",
-    title: String(body.title || "").trim().slice(0, 300),
+    title: repairImportText(body.title).trim().slice(0, 300),
     issueKey: String(body.issueKey || "").trim().slice(0, 2000),
-    content: body.content,
+    content: repairImportText(body.content),
     createdAt: now,
     expiresAt: Date.now() + CHECKLIST_IMPORT_TTL_MS,
   });
