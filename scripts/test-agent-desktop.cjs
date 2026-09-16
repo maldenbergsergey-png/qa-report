@@ -26,7 +26,7 @@ const server = http.createServer(async (req, res) => {
 });
 async function archive(version) {
   const stage = path.join(directory, `code-${version}`); fs.mkdirSync(stage, { recursive: true });
-  for (const name of ["qa-report-agent.js", "jira-profiles.js", "desktop"]) fs.cpSync(path.join(root, name), path.join(stage, name), { recursive: true });
+  for (const name of ["qa-report-agent.js", "jira-profiles.js", "jira-headers.js", "desktop"]) fs.cpSync(path.join(root, name), path.join(stage, name), { recursive: true });
   fs.writeFileSync(path.join(stage, "package.json"), JSON.stringify({ name: "qa-agent-fixture", version, main: "desktop/main.js" }));
   const name = `qr-report-agent-code-${version}.asar`, file = path.join(updatesDir, name);
   await asar.createPackage(stage, file);
@@ -79,6 +79,7 @@ async function archive(version) {
   assert(!JSON.stringify(state).includes('first-local-token'));
   await page.getByRole('button', { name: '＋ Добавить Jira', exact: true }).click();
   await page.locator('#label').fill('Вторая Jira'); await page.locator('#baseUrl').fill('https://jira-two.example.test/jira'); await page.locator('#token').fill('second-local-token');
+  await page.locator('#headerName').fill('X-Jira-Access'); await page.locator('#headerValue').fill('fixture-header-secret');
   await page.locator('#save').click(); await page.waitForFunction(() => document.querySelectorAll('.connection').length === 2 && document.querySelector('#settings').hidden);
   await page.getByRole('button', { name: 'Проверить: Вторая Jira', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#result').textContent.includes('Jira доступна'));
@@ -86,6 +87,17 @@ async function archive(version) {
   assert.equal(jiraRequests.at(-1).headers.authorization, 'Bearer second-local-token');
   assert.equal(jiraRequests.at(-1).headers['user-agent'], 'QA-Report-Agent/0.4.1');
   assert(jiraRequests.at(-1).url.startsWith('https://jira-two.example.test/jira/'));
+  assert.equal(jiraRequests.at(-1).headers['x-jira-access'], 'fixture-header-secret');
+  assert.equal(await page.title(), 'QA Report Connect');
+  assert(await page.locator('#result').evaluate(el => el.closest('section').getAttribute('aria-labelledby') === 'connectionsTitle'));
+  const safeState = await page.evaluate(() => window.agent.state());
+  assert(!JSON.stringify(safeState).includes('fixture-header-secret'));
+  await page.getByRole('button', { name: 'Изменить: Вторая Jira', exact: true }).click();
+  assert.equal(await page.locator('#headerName').inputValue(), 'X-Jira-Access');
+  assert.equal(await page.locator('#headerValue').inputValue(), '');
+  if (screenshots) await page.screenshot({ path: path.join(screenshots, 'connect-header-settings.png'), fullPage: true });
+  await page.locator('#save').click(); await page.waitForFunction(() => document.querySelector('#settings').hidden);
+  assert.equal(await application.evaluate(() => global.jiraRequests.at(-1).headers['x-jira-access']), 'fixture-header-secret');
   await page.locator('#checkUpdate').click(); await page.waitForFunction(() => document.querySelector('#updateAction').textContent === 'Загрузить обновление');
   await page.screenshot({ path: path.join(screenshots, 'agent-dark-update.png'), fullPage: true });
   await page.locator('#updateAction').click(); await page.waitForFunction(() => document.querySelector('#updateAction').textContent === 'Установить и перезапустить');
@@ -112,6 +124,8 @@ async function archive(version) {
   const saved = JSON.parse(fs.readFileSync(path.join(config, 'agent.json')));
   assert.equal(saved.jiras.length, 2); assert.equal(saved.jiras[0].token, 'first-local-token'); assert.equal(saved.jiras[1].token, 'second-local-token');
   assert(!JSON.stringify(requests).includes('local-token'));
+  assert(!JSON.stringify(requests).includes('fixture-header-secret'));
+  assert.equal(saved.jiras[1].additionalHeader.value, 'fixture-header-secret');
   assert.deepEqual(errors, []);
   console.log('PASS: real Electron bootstrap loads a signed ASAR, retains migration and both Jira credentials, renders two themes and installs only after an active job is reported.');
 })().catch(async error => { console.error(error); if (application) console.error(await application.evaluate(() => global.qaReportRuntime?.updates.state).catch(() => 'App closed')); process.exitCode = 1; }).finally(async () => { if (application) await application.close().catch(() => {}); server.close(); fs.rmSync(directory, { recursive: true, force: true }); });

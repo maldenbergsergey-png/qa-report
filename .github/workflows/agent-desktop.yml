@@ -51,7 +51,7 @@ jobs:
       - name: Verify macOS signatures
         if: runner.os == 'macOS'
         run: |
-          for app in agent/dist/mac*/"QA Report Agent.app"; do
+          for app in agent/dist/mac*/"QA Report Connect.app"; do
             codesign --verify --deep --strict "$app"
           done
       - uses: actions/upload-artifact@v4

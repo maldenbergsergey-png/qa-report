@@ -24,6 +24,7 @@ function removeJira(config, id) {
   return { ...next, jiras: next.jiras.filter(item => item.id !== id) };
 }
 function publicJiras(config) {
-  return listJiras(config).map(({ id, label, baseUrl, authMethod, type }) => ({ id, label, baseUrl, authMethod, type }));
+  return listJiras(config).map(({ id, label, baseUrl, authMethod, type, additionalHeader }) => ({ id, label, baseUrl, authMethod, type,
+    ...(additionalHeader ? { headerName: additionalHeader.name, hasHeaderValue: true } : {}) }));
 }
 module.exports = { listJiras, migrateConfig, saveJira, removeJira, publicJiras };

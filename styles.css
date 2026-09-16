@@ -5669,3 +5669,5 @@ body.pin-number-columns .section-header-table .number-header::before,
   font-size: 12px;
   line-height: 1.5;
 }
+
+.jira-extra-header{border:1px solid var(--border);border-radius:12px;padding:16px;margin:4px 0 16px;min-width:0}.jira-extra-header legend{padding:0 6px;font-weight:600}.jira-extra-header .field+.field{margin-top:12px}

@@ -29,6 +29,7 @@ function releaseServer(directory) {
   }
   async function handle(request, response, pathname) {
     if (!pathname.startsWith("/agent-updates/") && !/^\/downloads\/(?:qr|qa)-report-agent-/.test(pathname)) return false;
+    if (["/downloads/qa-report-agent-macos.zip", "/downloads/qa-report-agent-windows.zip"].includes(pathname)) return false;
     const name = pathname.split("/").pop();
     const legacy = INSTALLERS.find(item => pathname === `/downloads/${item[3]}`);
     if (!["GET", "HEAD"].includes(request.method)) { response.writeHead(405, { Allow: "GET, HEAD" }); response.end(); return true; }

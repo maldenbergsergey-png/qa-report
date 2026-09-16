@@ -6,7 +6,7 @@ const path = require('node:path');
 test('autostart sends the new value before rendering restores the previous snapshot', async () => {
   const nodes = new Map();
   const node = id => {
-    if (!nodes.has(id)) nodes.set(id, { value: '', checked: false, classList: { toggle() {} }, listeners: {}, replaceChildren() {}, addEventListener(name, fn) { this.listeners[name] = fn; } });
+    if (!nodes.has(id)) nodes.set(id, { value: '', dataset: {}, checked: false, classList: { toggle() {} }, listeners: {}, replaceChildren() {}, addEventListener(name, fn) { this.listeners[name] = fn; } });
     return nodes.get(id);
   };
   let state = { autoStart: false, loginSupported: true, version: 'test' };

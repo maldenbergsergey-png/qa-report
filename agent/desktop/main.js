@@ -10,6 +10,7 @@ const { createJiraTransport } = require("./network");
 const { listJiras, migrateConfig, saveJira, removeJira, publicJiras } = require("../jira-profiles");
 const { version } = require("../package.json");
 const runtime = global.qaReportRuntime;
+app.setName("QA Report Connect");
 const updates = runtime?.updates;
 let jobRunning = false, lastJobAt = Date.now();
 
@@ -19,7 +20,7 @@ if (tls.setDefaultCACertificates && tls.getCACertificates) {
   tls.setDefaultCACertificates([...tls.getCACertificates("default"), ...tls.getCACertificates("system"), ...extra]);
 }
 let window, tray, config, controller, running, quitting = false, busy = false;
-let status = { connected: false, message: "Подключите агент из настроек приложения" };
+let status = { connected: false, message: "Подключите QA Report Connect из настроек приложения" };
 const page = pathToFileURL(path.join(__dirname, "index.html")).href;
 let linkQueue = Promise.resolve();
 function snapshot() {
@@ -35,7 +36,7 @@ function emit(update = {}) {
 }
 function show() {
   if (!window) {
-    window = new BrowserWindow({ width: 660, height: 820, minWidth: 520, minHeight: 600, title: "QA Report Agent",
+    window = new BrowserWindow({ width: 660, height: 820, minWidth: 520, minHeight: 600, title: "QA Report Connect",
       webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
     window.setMenuBarVisibility(false);
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -74,7 +75,7 @@ async function connectLink(raw) {
   // An arbitrary website can open a registered protocol. Require local consent before rebinding.
   const answer = await dialog.showMessageBox(window, { type: "question", title: "Подключить QA Report?",
     message: `Разрешить задания от ${link.serverUrl}?`,
-    detail: config?.secret ? "Это заменит текущую привязку. Сохранённый доступ к Jira останется на этом компьютере." : "Агент будет выполнять запросы к настроенной вами Jira. Продолжайте, если вы только что нажали кнопку подключения на этом сайте.",
+    detail: config?.secret ? "Это заменит текущую привязку. Сохранённый доступ к Jira останется на этом компьютере." : "QA Report Connect будет выполнять запросы к настроенной вами Jira. Продолжайте, если вы только что нажали кнопку подключения на этом сайте.",
     buttons: ["Отмена", "Подключить"], defaultId: 0, cancelId: 0 });
   if (answer.response !== 1) return;
   await exclusive(async () => {
@@ -116,9 +117,9 @@ else {
     nativeTheme.themeSource = config?.theme === "graphite" ? "dark" : config?.theme || "system";
     const icon = nativeImage.createFromPath(path.join(__dirname, "tray.png"));
     tray = new Tray(icon.resize({ width: 22, height: 22 }));
-    tray.setToolTip("QA Report Agent");
-    tray.setContextMenu(Menu.buildFromTemplate([{ label: "Открыть QA Report Agent", click: show },
-      { label: "Завершить работу агента", click: () => app.quit() }]));
+    tray.setToolTip("QA Report Connect");
+    tray.setContextMenu(Menu.buildFromTemplate([{ label: "Открыть QA Report Connect", click: show },
+      { label: "Завершить работу QA Report Connect", click: () => app.quit() }]));
     tray.on("click", show);
     function handle(name, action) {
       ipcMain.handle(`agent:${name}`, async (event, payload) => {
@@ -130,8 +131,9 @@ else {
     handle("state", snapshot);
     handle("ready", () => runtime?.ready());
     handle("save", (form) => exclusive(async () => {
-      if (!config?.secret) throw new Error("Сначала подключите агент кнопкой в QA Report");
-      const jira = jiraFromForm(form);
+      if (!config?.secret) throw new Error("Сначала подключите QA Report Connect кнопкой в QA Report");
+      const previous = listJiras(config).find(item => item.id === form.id);
+      const jira = jiraFromForm(form, previous);
       const next = saveJira(config, jira, form.id || "", form.label);
       await core.verifyJira(jira);
       await stop();
@@ -192,5 +194,5 @@ else {
     });
     show(); start();
     enqueueLink(process.argv.find((arg) => arg.startsWith("qareport-agent:")));
-  }).catch((error) => { dialog.showErrorBox("QA Report Agent", core.errorMessage(error)); app.quit(); });
+  }).catch((error) => { dialog.showErrorBox("QA Report Connect", core.errorMessage(error)); app.quit(); });
 }

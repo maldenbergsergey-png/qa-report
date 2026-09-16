@@ -1,6 +1,17 @@
 // Newest release first. Add entries here; the dialog needs no UI changes.
 window.QaReportReleases = [
   {
+    version: "0.10.0", date: "2026-09-16",
+    changes: {
+      new: ["Для Jira можно сохранить необязательный заголовок доступа: отдельно в QA Report Connect или в настройках серверного подключения."],
+      improvements: [
+        "Приложение подключения теперь называется QA Report Connect; обновлены подписи и иконка.",
+        "Результат проверки Jira в QA Report Connect отображается сразу под подключениями."
+      ],
+      fixes: ["Восстановлена загрузка архивов для ручной установки QA Report Connect."]
+    }
+  },
+  {
     version: "0.9.0",
     date: "2026-09-15",
     changes: {

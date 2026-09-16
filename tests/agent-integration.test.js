@@ -72,6 +72,11 @@ test("local agent pairing, restricted job and result flow", async (context) => {
   assert.equal(status.devices[0].secret, undefined);
   const catalog = await fetch(`${ORIGIN}/api/agent/downloads`).then((response) => response.json());
   assert.equal(catalog.downloads.length, 2);
+  for (const platform of ["macos", "windows"]) {
+    const archive = await fetch(`${ORIGIN}/downloads/qa-report-agent-${platform}.zip`);
+    assert.equal(archive.status, 200);
+    assert.equal(Buffer.from(await archive.arrayBuffer()).subarray(0, 2).toString(), "PK");
+  }
   assert.deepEqual(catalog.downloads.map(item => item.platform), ["mac-arm64", "windows"]);
   for (const item of catalog.downloads) assert.match(item.url, /^https:\/\/github\.com\/maldenbergsergey-png\/qa-report\/releases\/download\/agent-v\d+\.\d+\.\d+\/qa-report-agent-\d+\.\d+\.\d+-(mac-arm64\.dmg|windows-x64\.exe)$/);
 

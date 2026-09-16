@@ -8,7 +8,7 @@ const { verifyManifest, compare } = require("../agent/bootstrap/updates");
 const agent = path.resolve(__dirname, "../agent");
 const pkg = require("../agent/package.json");
 const policy = require("../agent/bootstrap/policy.json");
-const FILES = ["qa-report-agent.js", "jira-profiles.js", "desktop/main.js", "desktop/network.js", "desktop/connection.js", "desktop/preload.js", "desktop/renderer.js", "desktop/index.html", "desktop/styles.css", "desktop/tray.png"];
+const FILES = ["qa-report-agent.js", "jira-profiles.js", "jira-headers.js", "desktop/main.js", "desktop/network.js", "desktop/connection.js", "desktop/preload.js", "desktop/renderer.js", "desktop/index.html", "desktop/styles.css", "desktop/tray.png"];
 async function build({ keyFile, directory, minimumVersion = policy.runtimeVersion, notes = ["Несколько подключений Jira и обновления из окна агента."] }) {
   if (!keyFile) throw new Error("Укажите AGENT_SIGNING_KEY_FILE: закрытый ключ выпуска хранится вне репозитория");
   const key = crypto.createPrivateKey(fs.readFileSync(keyFile));

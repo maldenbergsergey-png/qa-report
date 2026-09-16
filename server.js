@@ -8,6 +8,7 @@ const { createLocalImportService } = require("./local-import-server");
 const { downloadJiraAttachment, listJiraAttachments } = require("./jira-attachment-transfer");
 
 const AttachmentLimits = require("./attachment-limits");
+const JiraHeaders = require("./agent/jira-headers");
 
 const ROOT = __dirname;
 const { releaseServer } = require("./agent-release-server");
@@ -416,7 +417,7 @@ function requireAgent(request) {
   const authorization = firstHeader(request, ["authorization"]);
   const match = authorization.match(/^Bearer\s+([a-f0-9-]{36})\.([A-Za-z0-9_-]{32,})$/i);
   if (!match) {
-    const error = new Error("Не передан корректный ключ локального агента");
+    const error = new Error("Не передан корректный ключ QA Report Connect");
     error.status = 401;
     throw error;
   }
@@ -425,7 +426,7 @@ function requireAgent(request) {
   const actual = Buffer.from(stableHash(match[2]));
   const expected = Buffer.from(String(device?.token_hash || ""));
   if (!device || actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
-    const error = new Error("Ключ локального агента недействителен");
+    const error = new Error("Ключ QA Report Connect недействителен");
     error.status = 401;
     throw error;
   }
@@ -475,7 +476,7 @@ async function handleAgentPair(request, response) {
   const deviceId = crypto.randomUUID();
   const secret = crypto.randomBytes(32).toString("base64url");
   const now = new Date().toISOString();
-  const name = normalizeIdentityPart(body.name, "Локальный агент").slice(0, 100);
+  const name = normalizeIdentityPart(body.name, "QA Report Connect").slice(0, 100);
   const platform = normalizeIdentityPart(body.platform, "unknown").slice(0, 40);
   const version = normalizeIdentityPart(body.version, "0.1.0").slice(0, 30);
   db.exec("BEGIN IMMEDIATE");
@@ -509,7 +510,7 @@ async function handleAgentJobCreate(request, response) {
   const owner = resolveReportOwner(request);
   const body = await readJson(request);
   if (body.type !== "jira.network-test") {
-    const error = new Error("Этот тип задания локального агента не разрешён");
+    const error = new Error("Этот тип задания QA Report Connect не разрешён");
     error.status = 422;
     throw error;
   }
@@ -539,7 +540,7 @@ function createAgentJob(owner, type, payload) {
     ORDER BY last_seen_at DESC LIMIT 1
   `).get(owner.source, owner.id);
   if (!device || Date.now() - Date.parse(device.last_seen_at) >= 45_000) {
-    const error = new Error("Локальный агент не подключён");
+    const error = new Error("QA Report Connect не подключён");
     error.status = 409;
     throw error;
   }
@@ -561,16 +562,16 @@ async function waitForAgentJob(owner, jobId, timeoutMs = 120_000) {
   while (Date.now() < deadline) {
     const job = db.prepare("SELECT * FROM agent_jobs WHERE id = ? AND owner_source = ? AND owner_id = ?")
       .get(jobId, owner.source, owner.id);
-    if (!job) throw new Error("Задание локального агента исчезло");
+    if (!job) throw new Error("Задание QA Report Connect исчезло");
     if (job.status === "completed") return JSON.parse(job.result_json || "{}");
     if (["failed", "expired"].includes(job.status)) {
-      const error = new Error(job.error || "Локальный агент не выполнил Jira-запрос");
+      const error = new Error(job.error || "QA Report Connect не выполнил Jira-запрос");
       error.status = Number(JSON.parse(job.result_json || "{}").status || 502);
       throw error;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  const error = new Error("Локальный агент не ответил за отведённое время");
+  const error = new Error("QA Report Connect не ответил за отведённое время");
   error.status = 504;
   throw error;
 }
@@ -580,7 +581,7 @@ async function handleAgentJiraRequest(request, response, action) {
   const body = await readJson(request);
   const allowed = new Set(["test", "comment", "attachments", "import-comment", "import-attachment", "attachment-manifest"]);
   if (!allowed.has(action)) {
-    const error = new Error("Эта Jira-команда локального агента не разрешена");
+    const error = new Error("Эта Jira-команда QA Report Connect не разрешена");
     error.status = 404;
     throw error;
   }
@@ -590,7 +591,7 @@ async function handleAgentJiraRequest(request, response, action) {
   delete payload.cookie;
   delete payload.authorization;
   if (action === "attachments" && (!Array.isArray(payload.files) || payload.files.length > 20)) {
-    const error = new Error("За один раз можно передать локальному агенту не более 20 вложений");
+    const error = new Error("За один раз можно передать QA Report Connect не более 20 вложений");
     error.status = 422;
     throw error;
   }
@@ -614,7 +615,7 @@ async function handleAgentJobGet(request, response, jobId) {
   const job = db.prepare("SELECT * FROM agent_jobs WHERE id = ? AND owner_source = ? AND owner_id = ?")
     .get(jobId, owner.source, owner.id);
   if (!job) {
-    const error = new Error("Задание локального агента не найдено");
+    const error = new Error("Задание QA Report Connect не найдено");
     error.status = 404;
     throw error;
   }
@@ -680,7 +681,7 @@ async function handleAgentJobResult(request, response, jobId) {
   const db = getReportsDb();
   const job = db.prepare("SELECT * FROM agent_jobs WHERE id = ? AND device_id = ?").get(jobId, device.id);
   if (!job) {
-    const error = new Error("Задание локального агента не найдено");
+    const error = new Error("Задание QA Report Connect не найдено");
     error.status = 404;
     throw error;
   }
@@ -769,18 +770,20 @@ function normalizeConnection(input) {
   if ((type === "cloud" || authMethod === "basic") && !user) {
     throw new Error(type === "cloud" ? "Email Atlassian не указан" : "Логин Jira не указан");
   }
-  return { type, authMethod, baseUrl: baseUrl.toString().replace(/\/$/, ""), token, user };
+  const additionalHeader = JiraHeaders.normalize(input.additionalHeader);
+  return { type, authMethod, baseUrl: baseUrl.toString().replace(/\/$/, ""), token, user, additionalHeader };
 }
 
-function authHeaders(connection) {
+function authHeaders(connection, target) {
+  const additional = JiraHeaders.headers(connection, target);
   if (connection.authMethod === "cookie") {
-    return { Cookie: connection.token };
+    return { ...additional, Cookie: connection.token };
   }
   if (connection.type === "cloud" || connection.authMethod === "basic") {
     const credentials = Buffer.from(`${connection.user}:${connection.token}`).toString("base64");
-    return { Authorization: `Basic ${credentials}` };
+    return { ...additional, Authorization: `Basic ${credentials}` };
   }
-  return { Authorization: `Bearer ${connection.token}` };
+  return { ...additional, Authorization: `Bearer ${connection.token}` };
 }
 
 async function jiraFetch(connection, pathname, options = {}) {
@@ -791,6 +794,7 @@ async function jiraFetch(connection, pathname, options = {}) {
   try {
     response = await fetch(targetUrl, {
       ...fetchOptions,
+      redirect: "manual",
       headers: {
         Accept: "application/json",
         ...authHeaders(connection),
@@ -811,6 +815,9 @@ async function jiraFetch(connection, pathname, options = {}) {
     throw error;
   }
   const text = await response.text();
+  if (response.status >= 300 && response.status < 400) {
+    throw Object.assign(new Error("Jira перенаправляет запрос. Укажите конечный адрес Jira или обновите подключение SSO."), { status: 502 });
+  }
   if (response.status === 413) {
     throw Object.assign(new Error("Jira или её прокси отклонили загрузку по размеру (HTTP 413). Проверьте лимит вложений Jira и её прокси."),
       { status: 413, code: "JIRA_PAYLOAD_TOO_LARGE", pathname });
@@ -1368,7 +1375,7 @@ async function handleJiraImportAttachment(request, response) {
   const { issueKey } = parseIssueReference(connection, body.commentUrl);
   const file = await downloadJiraAttachment({
     connection, issueKey, attachmentId: body.attachmentId, jiraFetch, maxBytes: MAX_ATTACHMENT_FILE,
-    fetchFile: target => fetch(target, { redirect: "manual", headers: authHeaders(connection), signal: AbortSignal.timeout(60_000) }),
+    fetchFile: target => fetch(target, { redirect: "manual", headers: authHeaders(connection, target), signal: AbortSignal.timeout(60_000) }),
   });
   response.writeHead(200, {
     "Content-Type": file.type, "Content-Length": file.bytes.length,

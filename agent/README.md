@@ -1,6 +1,6 @@
-# QA Report Agent
+# QA Report Connect
 
-Графический агент **0.4.0**, ядро CLI **0.3.0**. Поддерживаются только
+QA Report Connect **0.4.1**, ядро CLI **0.3.0**. Поддерживаются только
 **macOS на Apple Silicon (M1 и новее)** и **Windows x64**. Linux, Intel Mac и
 нативная Windows ARM64 больше не выпускаются.
 
@@ -123,13 +123,15 @@ node scripts/build-agent-update.cjs /path/to/release/site
 
 ## Скачивание через GitHub Releases
 
-Два установщика опубликованы в публичном выпуске
-[QA Report Agent 0.4.0](https://github.com/maldenbergsergey-png/qa-report/releases/tag/agent-v0.4.0):
+Два установщика опубликованы в выпуске
+[Установщики 0.4.0](https://github.com/maldenbergsergey-png/qa-report/releases/tag/agent-v0.4.0):
 
 - `qa-report-agent-0.4.0-mac-arm64.dmg`;
 - `qa-report-agent-0.4.0-windows-x64.exe`.
 
-Вход в GitHub для скачивания не нужен. `/api/agent/downloads` возвращает прямые
+Для скачивания без входа в GitHub репозиторий и релиз должны быть публичными.
+Приватный репозиторий возвращает 404 пользователю без доступа, даже когда
+владелец может скачать оба файла. Проверка: `node scripts/check-agent-downloads.js` из корня. `/api/agent/downloads` возвращает прямые
 ссылки на эти assets; каталог не зависит от наличия установщиков на сервере.
 Старые `/downloads/<filename>` перенаправляются в тот же GitHub Release.
 Приложение открывает скачивание отдельно, сохраняя вкладку с отчётом.
@@ -201,3 +203,7 @@ PAT/basic/cookie, multipart, импорт и подтверждённую пуб
 или обновляет существующий. `--reset` удаляет локальную привязку и credentials.
 Обновление маленькими пакетами относится к графическому приложению; CLI
 обновляется заменой файлов. Для обычной работы используйте GUI.
+
+## QA Report Connect и заголовок Jira
+
+[Настройка заголовка, совместимость и проверка загрузок](../docs/connect.md).

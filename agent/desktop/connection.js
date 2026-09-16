@@ -1,5 +1,6 @@
 "use strict";
 const core = require("../qa-report-agent");
+const JiraHeaders = require("../jira-headers");
 
 function parseLink(value) {
   if (typeof value !== "string" || value.length > 4096) throw new Error("Некорректная ссылка подключения");
@@ -18,11 +19,12 @@ function parseLink(value) {
   return { serverUrl, code, ...(["light", "dark", "graphite"].includes(theme) ? { theme } : {}) };
 }
 
-function jiraFromForm(form) {
+function jiraFromForm(form, previous) {
   if (!form || typeof form !== "object") throw new Error("Заполните настройки Jira");
   let jira;
   if (form.mode === "curl") {
-    jira = core.parseCurlCredentials(String(form.curl || ""));
+    jira = !String(form.curl || "").trim() && previous?.authMethod === "cookie"
+      ? { ...previous } : core.parseCurlCredentials(String(form.curl || ""));
   } else {
     if (!["pat", "basic"].includes(form.mode)) throw new Error("Выберите способ входа");
     const baseUrl = core.jiraBaseFromUrl(String(form.baseUrl || "").trim());
@@ -32,6 +34,16 @@ function jiraFromForm(form) {
   }
   const url = new URL(jira.baseUrl);
   if (url.protocol !== "https:" || url.username || url.password) throw new Error("Укажите HTTPS-адрес Jira без логина и пароля в ссылке");
+  const sameConnection = previous && JiraHeaders.baseKey(previous.baseUrl) === JiraHeaders.baseKey(jira.baseUrl);
+  if (sameConnection && previous.authMethod === jira.authMethod) {
+    jira.user ||= previous.user;
+    jira.token ||= previous.token;
+  }
+  const name = String(form.headerName || "").trim();
+  const value = String(form.headerValue || "");
+  // Empty value keeps an existing secret only for the same Jira and header name.
+  jira.additionalHeader = JiraHeaders.normalize({ name, value: value ||
+    (sameConnection && name && name.toLowerCase() === previous.additionalHeader?.name.toLowerCase() ? previous.additionalHeader.value : "") });
   if (!jira.token || /[\r\n]/.test(jira.token)) throw new Error("Укажите корректный токен или данные сессии Jira");
   if (["basic", "api-token"].includes(jira.authMethod) && !jira.user) throw new Error("Укажите логин или email Atlassian");
   return jira;

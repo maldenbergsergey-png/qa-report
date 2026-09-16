@@ -15,6 +15,7 @@ COPY --chown=node:node local-import-server.js jira-attachment-transfer.js attach
 COPY --chown=node:node icons ./icons
 COPY --chown=node:node downloads/*.zip ./downloads/
 COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node agent/jira-headers.js ./agent/jira-headers.js
 COPY --chown=node:node agent-update-feed ./agent-releases
 RUN mkdir -p /app/agent-releases /app/feedback-data /app/reports-data && chown -R node:node /app/feedback-data /app/reports-data
 

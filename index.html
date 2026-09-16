@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="/icons/icon-192.png?v=2" />
     <script src="/pwa.js?v=2" defer></script>
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=98" />
+    <link rel="stylesheet" href="/styles.css?v=99" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -757,7 +757,7 @@
               <button class="settings-nav-item" type="button" data-settings-section="columns">Столбцы</button>
               <button class="settings-nav-item" type="button" data-settings-section="pinning">Закрепление столбцов</button>
             </div>
-            <button class="settings-nav-item" id="settingsJiraSectionButton" type="button" data-settings-section="jira" hidden>
+            <button class="settings-nav-item" id="settingsJiraSectionButton" type="button" data-settings-section="jira">
               <svg class="ui-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
               <span>Jira</span>
             </button>
@@ -821,6 +821,7 @@
               </fieldset>
             </section>
             <section class="settings-section" id="settingsJiraSection" data-settings-panel="jira" hidden>
+              <label class="field"><span>Подключение</span><select id="jiraTransport"><option value="server">Через сервер QA Report</option><option value="agent">Через QA Report Connect</option></select></label>
               <div class="settings-note">
                 Токен, пароль или cookie хранятся только в памяти открытой вкладки и исчезают после перезагрузки. Остальные настройки сохраняются локально в браузере.
               </div>
@@ -870,6 +871,14 @@
                   Разобрать и сохранить
                 </button>
               </div>
+              <fieldset class="jira-extra-header" id="jiraExtraHeaderFields">
+                <legend>Дополнительный заголовок · необязательно</legend>
+                <p class="settings-curl-hint">Если ИБ выдала заголовок для доступа к Jira, укажите его имя и значение. Они сохранятся в этом браузере для указанного адреса Jira.</p>
+                <label class="field"><span>Имя заголовка</span><input id="jiraHeaderName" maxlength="128" autocomplete="off" spellcheck="false" placeholder="X-Jira-Access" /></label>
+                <label class="field"><span>Значение</span><input id="jiraHeaderValue" type="password" maxlength="4096" autocomplete="off" placeholder="Значение от ИБ" /></label>
+                <p class="settings-curl-hint">Значение хранится локально вместе с настройкой. Очистите оба поля и сохраните настройки, чтобы удалить заголовок.</p>
+              </fieldset>
+              <p class="settings-curl-hint" id="jiraConnectHeaderHint" hidden>Дополнительный заголовок для этого подключения настраивается в QA Report Connect: «Изменить» у нужной Jira.</p>
               <div class="settings-section-actions">
                 <button class="button button-secondary" id="testJiraButton" type="button">
                   Проверить подключение
@@ -965,18 +974,18 @@
         </header>
         <div class="agent-setup-body">
           <section class="agent-desktop-setup">
-            <div class="agent-brand"><span class="brand-mark" aria-hidden="true"></span><strong>Report <span>Agent</span></strong></div>
+            <div class="agent-brand"><span class="brand-mark" aria-hidden="true"></span><strong>QA Report <span>Connect</span></strong></div>
             <div class="agent-install-row"><span class="agent-step-label">Установка</span><div id="desktopAgentDownloads" aria-live="polite">Загрузка…</div></div>
-            <p class="agent-short-hint">macOS на M1 и новее или Windows x64. После установки обновления агента доступны в его окне.</p>
+            <p class="agent-short-hint">macOS на M1 и новее или Windows x64. После установки обновления QA Report Connect доступны в его окне.</p>
             <div class="agent-install-row"><span class="agent-step-label">Подключение</span><div class="agent-pairing-actions">
               <button class="button button-primary" id="prepareDesktopAgentButton" type="button">Подключить</button>
-              <a class="button button-primary" id="launchDesktopAgentLink" hidden>Открыть агент</a>
+              <a class="button button-primary" id="launchDesktopAgentLink" hidden>Открыть QA Report Connect</a>
             </div></div>
-            <p id="desktopAgentHint" class="agent-short-hint" aria-live="polite">Кнопка откроет установленный агент для настройки Jira.</p>
+            <p id="desktopAgentHint" class="agent-short-hint" aria-live="polite">Кнопка откроет QA Report Connect для настройки Jira.</p>
           </section>
           <div class="agent-connection-state" id="agentConnectionState" aria-live="polite">
             <span class="agent-state-dot"></span>
-            <div><strong>Агент не подключён</strong><small>Создайте код и запустите агент на устройстве.</small></div>
+            <div><strong>QA Report Connect не подключён</strong><small>Создайте код и запустите QA Report Connect на устройстве.</small></div>
           </div>
           <div class="agent-test-row">
             <label class="field">
@@ -988,12 +997,12 @@
 
           <details class="agent-manual-setup"><summary>Ручная установка</summary>
           <section class="agent-guide-section">
-            <div class="agent-guide-heading"><span>1</span><div><strong>Установите и запустите агент</strong><small>Откройте инструкцию для своей операционной системы.</small></div></div>
+            <div class="agent-guide-heading"><span>1</span><div><strong>Установите и запустите QA Report Connect</strong><small>Откройте инструкцию для своей операционной системы.</small></div></div>
             <div class="agent-platform-list">
               <details class="agent-platform-card" data-agent-platform="macos">
                 <summary><span class="agent-platform-icon"></span><span><strong>macOS · Apple Silicon</strong><small>M1 и новее</small></span><span class="agent-summary-chevron">›</span></summary>
                 <div class="agent-platform-content">
-                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-macos.zip" download>Скачать агент для macOS</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
+                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-macos.zip" download>Скачать QA Report Connect для macOS</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
                   <ol><li>Установите Node.js LTS. После установки откройте «Терминал».</li><li>Подключите корпоративный VPN.</li><li>Скопируйте весь блок ниже в терминал и нажмите Enter.</li></ol>
                   <div class="agent-command"><button type="button" data-agent-copy-target="agentMacCommands">Скопировать</button><pre id="agentMacCommands">cd ~/Downloads
 unzip -o qa-report-agent-macos.zip
@@ -1007,8 +1016,8 @@ chmod +x start.command
               <details class="agent-platform-card" data-agent-platform="windows">
                 <summary><span class="agent-platform-icon">⊞</span><span><strong>Windows x64</strong><small>64-разрядная версия</small></span><span class="agent-summary-chevron">›</span></summary>
                 <div class="agent-platform-content">
-                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-windows.zip" download>Скачать агент для Windows</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
-                  <ol><li>Установите Node.js LTS и перезапустите PowerShell.</li><li>Подключите VPN.</li><li>Откройте PowerShell, скопируйте блок и нажмите Enter. Новый агент автоматически использует доверенные сертификаты Windows.</li></ol>
+                  <div class="agent-platform-action"><a class="button button-primary" href="/downloads/qa-report-agent-windows.zip" download>Скачать QA Report Connect для Windows</a><a href="https://nodejs.org/" target="_blank" rel="noreferrer">Скачать Node.js LTS</a></div>
+                  <ol><li>Установите Node.js LTS и перезапустите PowerShell.</li><li>Подключите VPN.</li><li>Откройте PowerShell, скопируйте блок и нажмите Enter. Новый QA Report Connect автоматически использует доверенные сертификаты Windows.</li></ol>
                   <div class="agent-command"><button type="button" data-agent-copy-target="agentWindowsCommands">Скопировать</button><pre id="agentWindowsCommands">cd $HOME\Downloads
 Expand-Archive -Path .\qa-report-agent-windows.zip -DestinationPath . -Force
 cd .\qa-report-agent
@@ -1021,7 +1030,7 @@ cd .\qa-report-agent
           </section>
 
           <section class="agent-guide-section">
-            <div class="agent-guide-heading"><span>2</span><div><strong>Подключите устройство</strong><small>Агент сам запросит адрес QR Report, код и имя компьютера.</small></div></div>
+            <div class="agent-guide-heading"><span>2</span><div><strong>Подключите устройство</strong><small>QA Report Connect сам запросит адрес QR Report, код и имя компьютера.</small></div></div>
           <div class="agent-pairing-card">
             <div>
               <span>Одноразовый код</span>
@@ -1030,42 +1039,42 @@ cd .\qa-report-agent
             </div>
             <div class="agent-pairing-actions"><button class="button button-secondary" id="copyAgentPairingCodeButton" type="button" data-agent-copy-target="agentPairingCode" disabled>Скопировать</button><button class="button button-primary" id="createAgentPairingButton" type="button">Создать код</button></div>
           </div>
-          <div class="agent-copy-field"><label class="field"><span>Адрес QR Report для агента</span><input id="agentServerUrl" type="url" readonly value="" /></label><button class="button button-secondary" type="button" data-agent-copy-target="agentServerUrl">Скопировать</button></div>
+          <div class="agent-copy-field"><label class="field"><span>Адрес QR Report для QA Report Connect</span><input id="agentServerUrl" type="url" readonly value="" /></label><button class="button button-secondary" type="button" data-agent-copy-target="agentServerUrl">Скопировать</button></div>
 
           </section>
 
           <section class="agent-guide-section">
             <div class="agent-guide-heading"><span>3</span><div><strong>Настройте доступ к Jira</strong><small>При первом запуске мастер откроется автоматически.</small></div></div>
             <div class="agent-auth-options"><div><strong>Personal Access Token</strong><span>Самый простой вариант, если Jira позволяет создать PAT.</span></div><div><strong>Copy as cURL</strong><span>Используйте для SSO и 2FA: скопируйте запрос из авторизованной вкладки Jira.</span></div></div>
-            <p class="agent-reconfigure-hint">Если токен или SSO-cookie изменились, остановите агент через <code>Ctrl+C</code> и выполните:</p>
+            <p class="agent-reconfigure-hint">Если токен или SSO-cookie изменились, остановите QA Report Connect через <code>Ctrl+C</code> и выполните:</p>
             <div class="agent-command agent-command-compact"><button type="button" data-agent-copy-target="agentConfigureCommand">Скопировать</button><pre id="agentConfigureCommand">node qa-report-agent.js --configure-jira</pre></div>
           </section>
 
           <section class="agent-guide-section">
-            <div class="agent-guide-heading"><span>4</span><div><strong>Проверьте и начните работу</strong><small>Убедитесь, что VPN включён, а окно агента остаётся открытым. Проверка подключения доступна выше.</small></div></div>
+            <div class="agent-guide-heading"><span>4</span><div><strong>Проверьте и начните работу</strong><small>Убедитесь, что VPN включён, а окно QA Report Connect остаётся открытым. Проверка подключения доступна выше.</small></div></div>
           </section>
           <div class="agent-reset-wrap"><details class="agent-reset-card agent-troubleshooting-card">
-            <summary><span><strong>Распространённые проблемы</strong><small>Что проверить, если агент не запускается или не подключается</small></span><span class="agent-summary-chevron">›</span></summary>
+            <summary><span><strong>Распространённые проблемы</strong><small>Что проверить, если QA Report Connect не запускается или не подключается</small></span><span class="agent-summary-chevron">›</span></summary>
             <div class="agent-reset-content">
               <div class="agent-troubleshooting-item">
                 <strong>Windows: сообщение <code>fetch failed</code></strong>
-                <p>Это часто бывает в корпоративной сети: браузер доверяет сертификату организации, а старый запуск Node.js его не использует. Актуально, если сайт открывается в браузере, но агент не может подключиться.</p>
-                <p>Свежий Windows-архив исправляет это автоматически. Для уже скачанного агента запустите в его папке:</p>
+                <p>Это часто бывает в корпоративной сети: браузер доверяет сертификату организации, а старый запуск Node.js его не использует. Актуально, если сайт открывается в браузере, но QA Report Connect не может подключиться.</p>
+                <p>Свежий Windows-архив исправляет это автоматически. Для уже скачанного QA Report Connect запустите в его папке:</p>
                 <div class="agent-command agent-command-compact"><button type="button" data-agent-copy-target="agentWindowsSystemCaCommand">Скопировать</button><pre id="agentWindowsSystemCaCommand">node --use-system-ca qa-report-agent.js</pre></div>
               </div>
               <ul class="agent-troubleshooting-list">
                 <li><strong><code>node</code> не найден.</strong> Установите Node.js LTS и заново откройте PowerShell.</li>
                 <li><strong>Код не найден или истёк.</strong> Создайте новый код: он действует 10 минут и используется один раз.</li>
-                <li><strong>Агент подключён, но Jira недоступна.</strong> Включите VPN и проверьте, открывается ли Jira в браузере на этом компьютере.</li>
+                <li><strong>QA Report Connect подключён, но Jira недоступна.</strong> Включите VPN и проверьте, открывается ли Jira в браузере на этом компьютере.</li>
               </ul>
             </div>
           </details></div>
           <div class="agent-reset-wrap"><details class="agent-reset-card">
-            <summary><span><strong>Начать настройку заново</strong><small>Если агент помнит старый сервер, Jira или устройство</small></span><span class="agent-summary-chevron">›</span></summary>
+            <summary><span><strong>Начать настройку заново</strong><small>Если QA Report Connect помнит старый сервер, Jira или устройство</small></span><span class="agent-summary-chevron">›</span></summary>
             <div class="agent-reset-content">
-              <ol><li>Остановите агент в терминале через <code>Ctrl+C</code>.</li><li>В папке <code>qa-report-agent</code> выполните команду ниже.</li><li>Создайте новый код и запустите файл <code>start</code> для своей ОС.</li></ol>
+              <ol><li>Остановите QA Report Connect в терминале через <code>Ctrl+C</code>.</li><li>В папке <code>qa-report-agent</code> выполните команду ниже.</li><li>Создайте новый код и запустите файл <code>start</code> для своей ОС.</li></ol>
               <div class="agent-command agent-command-compact"><button type="button" data-agent-copy-target="agentResetCommand">Скопировать</button><pre id="agentResetCommand">node qa-report-agent.js --reset</pre></div>
-              <p>Команда удалит привязку к QR Report, Jira credential и локальный TLS-CA. Сам агент и архив не удаляются.</p>
+              <p>Команда удалит привязку к QR Report, Jira credential и локальный TLS-CA. Сам QA Report Connect и архив не удаляются.</p>
             </div>
           </details></div>
           </details>
@@ -1175,11 +1184,12 @@ cd .\qa-report-agent
     <script src="/checklist-selection.js?v=2"></script>
     <script src="/checklist-table.js?v=2"></script>
     <script src="/checklist-numbering.js?v=2"></script>
-    <script src="/release-notes.js?v=19"></script>
+    <script src="/release-notes.js?v=20"></script>
     <script src="/jira-attachment-reuse.js?v=1"></script>
     <script src="/attachment-limits.js?v=1"></script>
     <script src="/attachment-import.js?v=4"></script>
-    <script src="/app.js?v=105"></script>
+    <script src="/agent/jira-headers.js?v=1"></script>
+    <script src="/app.js?v=106"></script>
     <script src="/local-import-client.js?v=2"></script>
   </body>
 </html>

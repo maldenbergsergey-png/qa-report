@@ -55,6 +55,34 @@ async function main() {
     { platform:'windows', label:'Windows · x64', version:'0.4.0', url:'https://github.com/maldenbergsergey-png/qa-report/releases/download/agent-v0.4.0/qa-report-agent-0.4.0-windows-x64.exe', available:true }
   ] } }));
   await page.goto(origin); await page.waitForSelector('#jiraMenuButton');
+  const jiraRequests = [];
+  await page.route('**/api/jira/test', route => { jiraRequests.push(route.request().postDataJSON()); return route.fulfill({json:{ok:true,displayName:'Fixture'}}); });
+  await page.evaluate(() => { openJiraSettings(); setSettingsSection('jira'); });
+  await page.locator('#jiraBaseUrl').fill(urls[0]); await page.locator('#jiraBaseUrl').blur();
+  await page.locator('#jiraToken').fill('fixture-token');
+  await page.locator('#jiraHeaderName').fill('X-Jira-Access'); await page.locator('#jiraHeaderValue').fill('browser-header-fixture');
+  await page.locator('#testJiraButton').click();
+  await page.waitForFunction(() => document.querySelector('#jiraConnectionState').textContent.includes('Подключено'));
+  assert.deepEqual(jiraRequests.at(-1).additionalHeader,{name:'X-Jira-Access',value:'browser-header-fixture'});
+  await page.reload(); await page.waitForSelector('#jiraMenuButton');
+  await page.evaluate(() => { openJiraSettings(); setSettingsSection('jira'); });
+  assert.equal(await page.locator('#jiraHeaderValue').inputValue(),'browser-header-fixture');
+  assert.equal(await page.locator('#jiraToken').inputValue(),'');
+  await page.locator('#jiraBaseUrl').fill(urls[1]); await page.locator('#jiraBaseUrl').blur();
+  assert.equal(await page.locator('#jiraHeaderName').inputValue(),'');
+  assert.equal(await page.locator('#jiraHeaderValue').inputValue(),'');
+  await page.locator('#jiraBaseUrl').fill(urls[0]); await page.locator('#jiraBaseUrl').blur();
+  assert.equal(await page.locator('#jiraHeaderValue').inputValue(),'browser-header-fixture');
+  if (output) { fs.mkdirSync(output,{recursive:true}); await page.screenshot({path:path.join(output,'server-header-settings.png'),fullPage:true}); }
+  await page.locator('#jiraHeaderName').fill('Authorization'); await page.locator('#jiraToken').fill('fixture-token');
+  await page.locator('#testJiraButton').click();
+  await page.waitForFunction(() => document.querySelector('#jiraConnectionState').textContent.includes('служебный'));
+  assert.equal(jiraRequests.length,1);
+  await page.locator('#jiraHeaderName').fill(''); await page.locator('#jiraHeaderValue').fill('');
+  await page.locator('#saveJiraSettingsButton').click();
+  assert.equal(await page.evaluate(() => savedJiraHeader(jiraSettings.baseUrl)),null);
+  await page.evaluate(() => closeJiraSettings());
+
   await page.evaluate(() => openAgentSetup());
   await page.waitForFunction(() => document.querySelector('#agentJiraSuggestions').options.length === 2);
   assert.equal(await page.locator('#desktopAgentDownloads option').count(),2);

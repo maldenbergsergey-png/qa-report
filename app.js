@@ -289,6 +289,7 @@ const elements = {
   jiraCurlState: document.querySelector("#jiraCurlState"),
   parseJiraCurlButton: document.querySelector("#parseJiraCurlButton"),
   jiraType: document.querySelector("#jiraType"),
+  jiraTransport: document.querySelector("#jiraTransport"),
   jiraAuthMethod: document.querySelector("#jiraAuthMethod"),
   jiraAuthMethodField: document.querySelector("#jiraAuthMethodField"),
   jiraBaseUrl: document.querySelector("#jiraBaseUrl"),
@@ -296,6 +297,8 @@ const elements = {
   jiraUser: document.querySelector("#jiraUser"),
   jiraUserLabel: document.querySelector("#jiraUserLabel"),
   jiraToken: document.querySelector("#jiraToken"),
+  jiraHeaderName: document.querySelector("#jiraHeaderName"),
+  jiraHeaderValue: document.querySelector("#jiraHeaderValue"),
   jiraTokenLabel: document.querySelector("#jiraTokenLabel"),
   jiraConnectionState: document.querySelector("#jiraConnectionState"),
   testJiraButton: document.querySelector("#testJiraButton"),
@@ -692,6 +695,36 @@ function loadJiraSettings() {
   } catch {
     return { type: "data-center", authMethod: "pat", baseUrl: "", user: "" };
   }
+}
+
+const JIRA_HEADERS_KEY = "qa-report-jira-headers-v1";
+function savedJiraHeaders() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(JIRA_HEADERS_KEY) || "{}");
+    return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
+  } catch { return {}; }
+}
+function savedJiraHeader(baseUrl) {
+  try { return window.QaReportJiraHeaders.normalize(savedJiraHeaders()[window.QaReportJiraHeaders.baseKey(baseUrl)]); }
+  catch { return null; }
+}
+function fillJiraHeaderForm() {
+  const header = savedJiraHeader(elements.jiraBaseUrl.value);
+  elements.jiraHeaderName.value = header?.name || "";
+  elements.jiraHeaderValue.value = header?.value || "";
+}
+function readJiraHeaderForm() {
+  if (elements.jiraTransport.value === "agent") return null;
+  return window.QaReportJiraHeaders.normalize({ name: elements.jiraHeaderName.value.trim(), value: elements.jiraHeaderValue.value });
+}
+function saveJiraHeader(baseUrl, header) {
+  if (elements.jiraTransport.value === "agent") return;
+  if (!baseUrl && !header) return;
+  const key = window.QaReportJiraHeaders.baseKey(baseUrl);
+  const saved = savedJiraHeaders();
+  if (header) saved[key] = header;
+  else delete saved[key];
+  localStorage.setItem(JIRA_HEADERS_KEY, JSON.stringify(saved));
 }
 
 function loadStorageSettings() {
@@ -3744,16 +3777,21 @@ function generateAdfDocument(options = {}) {
 }
 
 function fillJiraSettingsForm() {
+  elements.jiraTransport.value = jiraSettings.transport || "server";
   elements.jiraType.value = jiraSettings.type;
   elements.jiraAuthMethod.value =
     jiraSettings.authMethod === "basic" || jiraSettings.authMethod === "cookie" ? jiraSettings.authMethod : "pat";
   elements.jiraBaseUrl.value = jiraSettings.baseUrl;
   elements.jiraUser.value = jiraSettings.user;
   elements.jiraToken.value = jiraSecret;
+  fillJiraHeaderForm();
   updateJiraSettingsLabels();
 }
 
 function updateJiraSettingsLabels() {
+  const agent = elements.jiraTransport.value === "agent";
+  document.getElementById("jiraExtraHeaderFields").hidden = agent;
+  document.getElementById("jiraConnectHeaderHint").hidden = !agent;
   const cloud = elements.jiraType.value === "cloud";
   const basic = !cloud && elements.jiraAuthMethod.value === "basic";
   const cookie = !cloud && elements.jiraAuthMethod.value === "cookie";
@@ -3780,7 +3818,7 @@ function updateJiraSettingsLabels() {
 
 function readJiraSettingsForm() {
   return {
-    transport: jiraSettings.transport || "server",
+    transport: elements.jiraTransport.value,
     type: elements.jiraType.value,
     authMethod: elements.jiraType.value === "cloud" ? "api-token" : elements.jiraAuthMethod.value,
     baseUrl: elements.jiraBaseUrl.value.trim().replace(/\/+$/, ""),
@@ -3906,7 +3944,7 @@ function saveReportIdentitySettings() {
 }
 
 function setSettingsSection(section) {
-  const selected = ["checklist", "columns", "pinning", "files", "history"].includes(section) ? section : "checklist";
+  const selected = ["checklist", "columns", "pinning", "jira", "files", "history"].includes(section) ? section : "checklist";
   elements.settingsChecklistSectionButton.classList.toggle("group-active", ["checklist", "columns", "pinning"].includes(selected));
   elements.jiraSettingsModal.querySelectorAll("[data-settings-section]").forEach((button) => {
     const active = button.dataset.settingsSection === selected;
@@ -4012,6 +4050,8 @@ function closeJiraSettings() {
 function saveJiraSettings() {
   try {
     const settings = readJiraSettingsForm();
+    const header = readJiraHeaderForm();
+    saveJiraHeader(settings.baseUrl, header);
     jiraSettings = settings;
     jiraSecret = elements.jiraToken.value;
     localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
@@ -4020,7 +4060,7 @@ function saveJiraSettings() {
     saveDefaultColumnsSettings();
     saveChecklistSettings();
     savePinnedColumns();
-    setConnectionState("Настройки сохранены. Секрет останется только до перезагрузки.", "success");
+    setConnectionState("Настройки сохранены. Токен, пароль или cookie останутся только до перезагрузки.", "success");
     setStorageConnectionState("Настройки файлов сохранены. Токены останутся только до перезагрузки.", "success");
     setSettingsSavedState(true);
   } catch (error) {
@@ -4321,7 +4361,12 @@ async function jiraRequest(path, body, options = {}) {
       const useAgent = body?.transport === "agent" && path.startsWith("/api/jira/");
       const requestPath = useAgent ? path.replace("/api/jira/", "/api/agent/jira/") : path;
       const requestBody = { ...body };
-      if (useAgent) delete requestBody.token;
+      if (useAgent) {
+        delete requestBody.token;
+        delete requestBody.additionalHeader;
+      } else if (path.startsWith("/api/jira/") && !Object.hasOwn(requestBody, "additionalHeader")) {
+        requestBody.additionalHeader = savedJiraHeader(requestBody.baseUrl);
+      }
       const serializedBody = JSON.stringify(requestBody);
       if (path === "/api/jira/attachments") {
         const limitError = window.QaReportAttachmentLimits.requestError(serializedBody, attachmentLimits);
@@ -4349,7 +4394,7 @@ async function jiraRequest(path, body, options = {}) {
         });
       }
       if (binary) {
-        if (!result.file?.dataBase64) throw new Error("Обновите локальный агент: он не вернул содержимое вложения");
+        if (!result.file?.dataBase64) throw new Error("Обновите QA Report Connect: он не вернул содержимое вложения");
         const bytes = Uint8Array.from(atob(result.file.dataBase64), c => c.charCodeAt(0));
         return new Blob([bytes], { type: result.file.type || "application/octet-stream" });
       }
@@ -4464,7 +4509,7 @@ async function uploadPendingImages(settings, issue, options = {}) {
   try {
     manifest = await jiraRequest("/api/jira/attachment-manifest", { ...settings, token: jiraSecret, ...issue }, { signal });
   } catch (error) {
-    if (/Неподдерживаемое задание/.test(error.message)) throw new Error("Для повторного использования вложений обновите локальный агент до версии 0.3.6 или новее");
+    if (/Неподдерживаемое задание/.test(error.message)) throw new Error("Для повторного использования вложений обновите QA Report Connect до версии 0.3.6 или новее");
     throw error;
   }
   if (!manifest.attachmentReuse) throw new Error("Обновите подключение Jira: проверка существующих вложений не поддерживается");
@@ -4507,9 +4552,11 @@ async function testJiraConnection() {
   try {
     const settings = readJiraSettingsForm();
     const token = elements.jiraToken.value;
+    const additionalHeader = readJiraHeaderForm();
     validateJiraSettings(settings, token);
     setConnectionState("Проверяем подключение…");
-    const result = await jiraRequest("/api/jira/test", { ...settings, token });
+    const result = await jiraRequest("/api/jira/test", { ...settings, token, additionalHeader });
+    saveJiraHeader(settings.baseUrl, additionalHeader);
     jiraSettings = settings;
     jiraSecret = token;
     localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
@@ -6594,7 +6641,7 @@ async function analyzeImport() {
       attachmentRequest = { ...jiraSettings, token: jiraSecret, commentUrl };
       const result = await jiraRequest("/api/jira/import-comment", attachmentRequest);
       if (jiraSettings.transport === "agent" && includeAttachments && !result.attachmentDownload) {
-        throw new Error("Для импорта файлов обновите локальный Jira-агент до версии 0.3.6 или выберите импорт без вложений");
+        throw new Error("Для импорта файлов обновите QA Report Connect до версии 0.3.6 или выберите импорт без вложений");
       }
       imported =
         result.format === "adf"
@@ -7214,9 +7261,9 @@ function applyTheme(theme) {
 function setAgentConnectionState({ connected = false, title, detail } = {}) {
   elements.agentConnectionState.classList.toggle("connected", connected);
   elements.agentConnectionState.querySelector("strong").textContent =
-    title || (connected ? "Локальный агент подключён" : "Агент не подключён");
+    title || (connected ? "QA Report Connect подключён" : "QA Report Connect не подключён");
   elements.agentConnectionState.querySelector("small").textContent =
-    detail || (connected ? "Устройство готово принимать безопасные задания." : "Запустите агент на устройстве.");
+    detail || (connected ? "Устройство готово принимать безопасные задания." : "Запустите QA Report Connect на устройстве.");
   elements.testAgentJiraButton.disabled = !connected;
 }
 
@@ -7239,7 +7286,7 @@ async function refreshAgentStatus() {
       if (Date.now() < agentStatusMessageUntil) return true;
       setAgentConnectionState({
         connected: true,
-        title: active.name || "Локальный агент подключён",
+        title: active.name || "QA Report Connect подключён",
         detail: `Подключён · версия ${active.version}${urls.length > 1 ? ` · Jira: ${urls.length}` : ""}`,
       });
       return true;
@@ -7247,11 +7294,11 @@ async function refreshAgentStatus() {
     const lastDevice = result.devices?.[0];
     setAgentConnectionState({
       connected: false,
-      title: lastDevice ? `${lastDevice.name} не в сети` : "Агент не подключён",
-      detail: lastDevice ? "Запустите агент или проверьте доступ к QR Report." : "Создайте код и запустите агент на устройстве.",
+      title: lastDevice ? `${lastDevice.name} не в сети` : "QA Report Connect не подключён",
+      detail: lastDevice ? "Запустите QA Report Connect или проверьте доступ к QA Report." : "Создайте код и запустите QA Report Connect на устройстве.",
     });
   } catch (error) {
-    setAgentConnectionState({ connected: false, title: "Не удалось проверить агента", detail: error.message });
+    setAgentConnectionState({ connected: false, title: "Не удалось проверить QA Report Connect", detail: error.message });
   }
   return false;
 }
@@ -7279,7 +7326,7 @@ async function loadDesktopAgentDownloads() {
   try {
     const result = await reportApi("/api/agent/downloads");
     const select = document.createElement("select");
-    select.setAttribute("aria-label", "Платформа агента");
+    select.setAttribute("aria-label", "Платформа QA Report Connect");
     for (const item of result.downloads) {
       const option = document.createElement("option");
       option.value = item.url; option.textContent = item.version ? `${item.label} · ${item.version}` : item.label;
@@ -7291,7 +7338,7 @@ async function loadDesktopAgentDownloads() {
     const download = document.createElement("a");
     download.className = "button button-secondary"; download.textContent = "Скачать";
     download.target = "_blank"; download.rel = "noopener noreferrer";
-    download.title = "Скачать установщик QA Report Agent с GitHub";
+    download.title = "Скачать установщик QA Report Connect";
     if (selected) { select.value = selected.url; download.href = selected.url; }
     else { download.textContent = "Нет сборок"; select.disabled = true; }
     select.addEventListener("change", () => { download.href = select.value; });
@@ -7316,7 +7363,7 @@ async function prepareDesktopAgent() {
     url.searchParams.set("server", result.serverUrl); url.searchParams.set("code", result.code);
     url.searchParams.set("theme", document.documentElement.dataset.theme || "light");
     link.href = url.href; link.hidden = false; button.hidden = true;
-    hint.textContent = "Откройте установленный агент и подтвердите подключение.";
+    hint.textContent = "Откройте QA Report Connect и подтвердите подключение.";
     clearTimeout(desktopLinkTimer);
     desktopLinkTimer = setTimeout(() => {
       link.hidden = true; button.hidden = false; link.removeAttribute("href");
@@ -7363,7 +7410,7 @@ async function testJiraThroughAgent() {
   }
   elements.testAgentJiraButton.disabled = true;
   elements.testAgentJiraButton.textContent = "Проверяем…";
-  setAgentConnectionState({ connected: true, title: "Проверяем Jira через устройство", detail: "Запрос выполняется в сети и VPN локального агента." });
+  setAgentConnectionState({ connected: true, title: "Проверяем Jira через устройство", detail: "Запрос выполняется в сети и VPN QA Report Connect." });
   try {
     const created = await reportApi("/api/agent/jobs", {
       method: "POST",
@@ -7378,7 +7425,7 @@ async function testJiraThroughAgent() {
         break;
       }
     }
-    if (!completed) throw new Error("Агент не ответил за отведённое время");
+    if (!completed) throw new Error("QA Report Connect не ответил за отведённое время");
     if (completed.status !== "completed") throw new Error(completed.error || "Проверка завершилась с ошибкой");
     const result = completed.result;
     const detail = result.browserChallenge
@@ -7398,7 +7445,7 @@ async function testJiraThroughAgent() {
     localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
     showToast("Сетевая проверка Jira завершена");
   } catch (error) {
-    setAgentConnectionState({ connected: true, title: "Агент подключён, Jira недоступна", detail: error.message });
+    setAgentConnectionState({ connected: true, title: "QA Report Connect подключён, Jira недоступна", detail: error.message });
     agentStatusMessageUntil = Date.now() + 15_000;
     showToast(`Проверка Jira: ${error.message}`, 7000);
   } finally {
@@ -8263,6 +8310,8 @@ elements.settingsButton.addEventListener("click", openJiraSettings);
 elements.closeJiraSettingsButton.addEventListener("click", closeJiraSettings);
 elements.saveJiraSettingsButton.addEventListener("click", saveJiraSettings);
 elements.testJiraButton.addEventListener("click", testJiraConnection);
+elements.jiraBaseUrl.addEventListener("change", fillJiraHeaderForm);
+elements.jiraTransport.addEventListener("change", updateJiraSettingsLabels);
 elements.publishButton.addEventListener("click", publishToJira);
 elements.publishCancelButton.addEventListener("click", cancelPublishProgress);
 document.getElementById("publishStatusSelectAll").addEventListener("change", (event) => {

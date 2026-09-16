@@ -11,6 +11,7 @@ const tls = require("node:tls");
 
 const VERSION = "0.3.0";
 const { listJiras, migrateConfig, saveJira } = require("./jira-profiles");
+const JiraHeaders = require("./jira-headers");
 let jiraRequest = (...args) => fetch(...args);
 function setJiraTransport(request) {
   if (typeof request !== "function") throw new TypeError("Jira transport must be a function");
@@ -46,7 +47,7 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "agent.json");
 const EXTRA_CA_FILE = path.join(CONFIG_DIR, "jira-extra-ca.pem");
 
 function restartWithExtraCa(removeConfigure = false) {
-  console.log("Перезапускаем агент с восстановленной TLS-цепочкой…\n");
+  console.log("Перезапускаем QA Report Connect с восстановленной TLS-цепочкой…\n");
   const forwardedArguments = removeConfigure
     ? process.argv.slice(2).filter((value) => value !== "--configure-jira")
     : process.argv.slice(2);
@@ -307,6 +308,9 @@ async function configureJira(config, terminal) {
     jira = { baseUrl, type: cloud ? "cloud" : "data-center", authMethod: cloud ? "api-token" : mode === "2" ? "pat" : "basic", user, token };
   }
   if (!jira.token) throw new Error("Jira credential не найден");
+  const headerName = String(await terminal.question("Дополнительный заголовок Jira (необязательно, Enter — пропустить): ")).trim();
+  const headerValue = headerName ? await questionSecret(terminal, "Значение заголовка от ИБ.") : "";
+  jira.additionalHeader = JiraHeaders.normalize({ name: headerName, value: headerValue });
   console.log("\nПроверяем адрес и авторизацию Jira…");
   try {
     const verification = await verifyJira(jira);
@@ -370,14 +374,15 @@ async function pairAgent() {
   }
 }
 
-async function executeNetworkTest(payload) {
+async function executeNetworkTest(config, payload) {
   const base = new URL(payload.baseUrl);
+  const connection = listJiras(config).find(jira => JiraHeaders.baseKey(jira.baseUrl) === JiraHeaders.baseKey(payload.baseUrl));
   const target = new URL(`${base.pathname.replace(/\/+$/, "")}/rest/api/2/serverInfo`, base.origin);
   const startedAt = Date.now();
   const response = await jiraRequest(target, {
     method: "GET",
     redirect: "manual",
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", ...(connection ? JiraHeaders.headers(connection) : {}) },
     signal: AbortSignal.timeout(15_000),
   });
   const text = await response.text();
@@ -398,7 +403,7 @@ async function executeNetworkTest(payload) {
 function configuredJira(config, payload) {
   const connections = listJiras(config).filter(jira => jira.baseUrl && jira.token);
   if (!connections.length) {
-    const error = new Error("Jira не настроена в локальном агенте. Добавьте подключение в агенте.");
+    const error = new Error("Jira не настроена в QA Report Connect. Добавьте подключение в QA Report Connect.");
     error.status = 401;
     throw error;
   }
@@ -410,19 +415,20 @@ function configuredJira(config, payload) {
   const requested = jiraBaseFromUrl(raw);
   const connection = connections.find(jira => jiraBaseFromUrl(jira.baseUrl) === requested);
   if (!connection) {
-    const error = new Error("Задание запрашивает другую Jira, не разрешённую в локальном агенте. Добавьте её в список подключений.");
+    const error = new Error("Задание запрашивает другую Jira, не разрешённую в QA Report Connect. Добавьте её в список подключений.");
     error.status = 403;
     throw error;
   }
   return connection;
 }
 
-function jiraAuthHeaders(connection) {
-  if (connection.authMethod === "cookie") return { Cookie: connection.token };
+function jiraAuthHeaders(connection, target) {
+  const additional = JiraHeaders.headers(connection, target);
+  if (connection.authMethod === "cookie") return { ...additional, Cookie: connection.token };
   if (connection.type === "cloud" || connection.authMethod === "basic") {
-    return { Authorization: `Basic ${Buffer.from(`${connection.user}:${connection.token}`).toString("base64")}` };
+    return { ...additional, Authorization: `Basic ${Buffer.from(`${connection.user}:${connection.token}`).toString("base64")}` };
   }
-  return { Authorization: `Bearer ${connection.token}` };
+  return { ...additional, Authorization: `Bearer ${connection.token}` };
 }
 
 async function jiraFetch(connection, pathname, options = {}) {
@@ -618,7 +624,7 @@ async function executeJiraImportAttachment(config, payload) {
     ? new URL(`${connection.baseUrl}/rest/api/3/attachment/content/${encodeURIComponent(attachment.id)}?redirect=false`)
     : new URL(attachment.content, `${connection.baseUrl}/`);
   if (target.origin !== new URL(connection.baseUrl).origin || target.username || target.password) throw new Error("Адрес вложения вне разрешённой Jira");
-  const response = await jiraRequest(target.toString(), { redirect: "manual", headers: jiraAuthHeaders(connection), signal: AbortSignal.timeout(60_000) });
+  const response = await jiraRequest(target.toString(), { redirect: "manual", headers: jiraAuthHeaders(connection, target), signal: AbortSignal.timeout(60_000) });
   const type = String(response.headers.get("content-type") || "").split(";")[0];
   if (!response.ok || (type === "text/html" && attachment.mimeType !== "text/html")) { await response.body?.cancel(); throw new Error(`Jira не отдала файл (HTTP ${response.status}). Обновите подключение Jira`); }
   if (Number(response.headers.get("content-length")) > limit) { await response.body?.cancel(); throw new Error("Вложение больше 50 МБ"); }
@@ -628,7 +634,7 @@ async function executeJiraImportAttachment(config, payload) {
 }
 
 async function executeJob(config, job) {
-  if (job.type === "jira.network-test") return executeNetworkTest(job.payload);
+  if (job.type === "jira.network-test") return executeNetworkTest(config, job.payload);
   if (job.type === "jira.test") return executeJiraTest(config, job.payload);
   if (job.type === "jira.comment") return executeJiraComment(config, job.payload);
   if (job.type === "jira.attachments") return executeJiraAttachments(config, job.payload);
@@ -665,7 +671,7 @@ function abortableWait(ms, signal) {
 
 async function pairWithCode(server, code, name = `${os.hostname()} (${process.platform})`) {
   const serverUrl = normalizeServerUrl(server);
-  if (!/^\d{8}$/.test(String(code))) throw new Error("Код подключения недействителен. Откройте агент из QA Report ещё раз.");
+  if (!/^\d{8}$/.test(String(code))) throw new Error("Код подключения недействителен. Откройте QA Report Connect из QA Report ещё раз.");
   const result = await fetchJson(`${serverUrl}/api/agent/pair`, {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(20_000),
     body: JSON.stringify({ code, name, platform: process.platform, version: VERSION }),
@@ -675,10 +681,10 @@ async function pairWithCode(server, code, name = `${os.hostname()} (${process.pl
 }
 
 async function run(config, { signal, onStatus = () => {}, onPreferences = () => {}, onJob = () => {}, version = VERSION } = {}) {
-  console.log(`QA Report Agent ${VERSION}`);
+  console.log(`QA Report Connect ${version}`);
   console.log(`Устройство: ${config.name}`);
   console.log(`Сервер: ${config.serverUrl}`);
-  console.log("Агент подключён. Оставьте это окно открытым; Ctrl+C — остановить.\n");
+  console.log("QA Report Connect подключён. Оставьте это окно открытым; Ctrl+C — остановить.\n");
   let failureDelay = 2000;
   while (!signal?.aborted) {
     try {
@@ -728,7 +734,7 @@ async function main() {
     for (const file of [CONFIG_FILE, EXTRA_CA_FILE]) {
       try { fs.unlinkSync(file); } catch (error) { if (error.code !== "ENOENT") throw error; }
     }
-    console.log("Локальные настройки агента полностью удалены.");
+    console.log("Локальные настройки QA Report Connect полностью удалены.");
     console.log("Запустите start ещё раз и введите новый адрес QA Report и код подключения.");
     return;
   }
@@ -751,10 +757,10 @@ async function main() {
 
 if (require.main === module) {
   main().catch((error) => {
-    console.error(`QA Report Agent: ${errorMessage(error)}`);
+    console.error(`QA Report Connect: ${errorMessage(error)}`);
     process.exitCode = 1;
   });
 }
 
 module.exports = { jiraBaseFromUrl, parseCurlCredentials, tokenizeCurl, normalizeServerUrl,
-  executeJiraAttachments, executeJiraAttachmentManifest, executeJiraImportAttachment, executeJiraImportComment, configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };
+  executeJob, executeJiraAttachments, executeJiraAttachmentManifest, executeJiraImportAttachment, executeJiraImportComment, configuredJira, readConfig, writeConfig, pairWithCode, verifyJira, setJiraTransport, run, errorMessage, CONFIG_FILE, EXTRA_CA_FILE };

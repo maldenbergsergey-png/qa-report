@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 // Keep explicitly selected configuration profiles isolated, including downloaded code.
 if (process.env.QA_REPORT_AGENT_CONFIG_DIR) app.setPath("userData", path.join(path.resolve(process.env.QA_REPORT_AGENT_CONFIG_DIR), "desktop-profile"));
+else app.setPath("userData", path.join(app.getPath("appData"), "QA Report Agent")); // Stable pre-rename update/profile directory.
 const { Updates } = require("./updates");
 const policy = require("./policy.json");
 // A second invocation must not mark the running release as an unsuccessful boot.

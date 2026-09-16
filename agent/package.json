@@ -1,7 +1,7 @@
 {
   "name": "qr-report-agent",
-  "version": "0.4.0",
-  "description": "Графический агент QA Report для подключения к Jira",
+  "version": "0.4.1",
+  "description": "QA Report Connect — подключение QA Report к Jira",
   "author": "QA Report",
   "private": true,
   "main": "bootstrap/main.js",
@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "app.qareport.agent",
-    "productName": "QA Report Agent",
+    "productName": "QA Report Connect",
     "directories": {
       "output": "dist"
     },
@@ -24,12 +24,13 @@
       "bootstrap/**/*",
       "desktop/**/*",
       "jira-profiles.js",
+      "jira-headers.js",
       "qa-report-agent.js",
       "package.json"
     ],
     "protocols": [
       {
-        "name": "QA Report Agent",
+        "name": "QA Report Connect",
         "schemes": [
           "qareport-agent"
         ]
