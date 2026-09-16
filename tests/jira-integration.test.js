@@ -604,7 +604,14 @@ async function main() {
 
     console.log("Jira integration test passed");
   } finally {
-    app.kill("SIGTERM");
+    // Windows holds SQLite files open until the child process has actually exited.
+    if (app.exitCode === null && app.signalCode === null) {
+      await new Promise((resolve, reject) => {
+        app.once("exit", resolve);
+        app.once("error", reject);
+        app.kill("SIGTERM");
+      });
+    }
     await new Promise((resolve) => mock.close(resolve));
     fs.rmSync(testDir, { recursive: true, force: true });
   }
