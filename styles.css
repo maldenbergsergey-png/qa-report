@@ -1553,6 +1553,23 @@ body.section-sticky-active .editor-toolbar::after {
   display: inline-block;
 }
 
+.row-number-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 3px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+}
+
+.row-number-input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
 .check-table tbody tr.row-dragging > td {
   opacity: 0.42;
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
@@ -4244,6 +4261,9 @@ body.resizing-code * {
     left: auto;
   }
 
+  #jiraSettingsModal { padding: 12px; }
+  .settings-modal { width: calc(100vw - 24px); }
+
   .settings-layout {
     grid-template-columns: 1fr;
   }
@@ -5671,3 +5691,5 @@ body.pin-number-columns .section-header-table .number-header::before,
 }
 
 .jira-extra-header{border:1px solid var(--border);border-radius:12px;padding:16px;margin:4px 0 16px;min-width:0}.jira-extra-header legend{padding:0 6px;font-weight:600}.jira-extra-header .field+.field{margin-top:12px}
+
+#alternativeConfirmButton[hidden] { display: none; }

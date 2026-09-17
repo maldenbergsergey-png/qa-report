@@ -275,33 +275,10 @@ const elements = {
   jiraSettingsModal: document.querySelector("#jiraSettingsModal"),
   closeJiraSettingsButton: document.querySelector("#closeJiraSettingsButton"),
   settingsChecklistSectionButton: document.querySelector("#settingsChecklistSectionButton"),
-  settingsJiraSectionButton: document.querySelector("#settingsJiraSectionButton"),
   settingsFilesSectionButton: document.querySelector("#settingsFilesSectionButton"),
   settingsHistorySectionButton: document.querySelector("#settingsHistorySectionButton"),
-  settingsJiraSection: document.querySelector("#settingsJiraSection"),
   settingsFilesSection: document.querySelector("#settingsFilesSection"),
   settingsHistorySection: document.querySelector("#settingsHistorySection"),
-  jiraManualTab: document.querySelector("#jiraManualTab"),
-  jiraCurlTab: document.querySelector("#jiraCurlTab"),
-  jiraManualPane: document.querySelector("#jiraManualPane"),
-  jiraCurlPane: document.querySelector("#jiraCurlPane"),
-  jiraCurlInput: document.querySelector("#jiraCurlInput"),
-  jiraCurlState: document.querySelector("#jiraCurlState"),
-  parseJiraCurlButton: document.querySelector("#parseJiraCurlButton"),
-  jiraType: document.querySelector("#jiraType"),
-  jiraTransport: document.querySelector("#jiraTransport"),
-  jiraAuthMethod: document.querySelector("#jiraAuthMethod"),
-  jiraAuthMethodField: document.querySelector("#jiraAuthMethodField"),
-  jiraBaseUrl: document.querySelector("#jiraBaseUrl"),
-  jiraUserField: document.querySelector("#jiraUserField"),
-  jiraUser: document.querySelector("#jiraUser"),
-  jiraUserLabel: document.querySelector("#jiraUserLabel"),
-  jiraToken: document.querySelector("#jiraToken"),
-  jiraHeaderName: document.querySelector("#jiraHeaderName"),
-  jiraHeaderValue: document.querySelector("#jiraHeaderValue"),
-  jiraTokenLabel: document.querySelector("#jiraTokenLabel"),
-  jiraConnectionState: document.querySelector("#jiraConnectionState"),
-  testJiraButton: document.querySelector("#testJiraButton"),
   saveJiraSettingsButton: document.querySelector("#saveJiraSettingsButton"),
   settingsSaveCheck: document.querySelector("#settingsSaveCheck"),
   yandexStorageEnabled: document.querySelector("#yandexStorageEnabled"),
@@ -365,6 +342,7 @@ const elements = {
   confirmModalMessage: document.querySelector("#confirmModalMessage"),
   closeConfirmButton: document.querySelector("#closeConfirmButton"),
   cancelConfirmButton: document.querySelector("#cancelConfirmButton"),
+  alternativeConfirmButton: document.querySelector("#alternativeConfirmButton"),
   acceptConfirmButton: document.querySelector("#acceptConfirmButton"),
   feedbackModal: document.querySelector("#feedbackModal"),
   closeFeedbackButton: document.querySelector("#closeFeedbackButton"),
@@ -708,25 +686,6 @@ function savedJiraHeader(baseUrl) {
   try { return window.QaReportJiraHeaders.normalize(savedJiraHeaders()[window.QaReportJiraHeaders.baseKey(baseUrl)]); }
   catch { return null; }
 }
-function fillJiraHeaderForm() {
-  const header = savedJiraHeader(elements.jiraBaseUrl.value);
-  elements.jiraHeaderName.value = header?.name || "";
-  elements.jiraHeaderValue.value = header?.value || "";
-}
-function readJiraHeaderForm() {
-  if (elements.jiraTransport.value === "agent") return null;
-  return window.QaReportJiraHeaders.normalize({ name: elements.jiraHeaderName.value.trim(), value: elements.jiraHeaderValue.value });
-}
-function saveJiraHeader(baseUrl, header) {
-  if (elements.jiraTransport.value === "agent") return;
-  if (!baseUrl && !header) return;
-  const key = window.QaReportJiraHeaders.baseKey(baseUrl);
-  const saved = savedJiraHeaders();
-  if (header) saved[key] = header;
-  else delete saved[key];
-  localStorage.setItem(JIRA_HEADERS_KEY, JSON.stringify(saved));
-}
-
 function loadStorageSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_SETTINGS_KEY) || "{}");
@@ -1842,6 +1801,8 @@ function collectSectionsFromDom() {
       rowElement.querySelectorAll(".cell-editor[data-column-id]").forEach((editor) => {
         row.cells[editor.dataset.columnId] = cleanEditorHtml(editor);
       });
+      const number = rowElement.querySelector(".row-number-input");
+      if (number && draft.numberingMode === "manual") row.manualNumber = ChecklistNumbering.normalizeNumber(number.value);
       const status = rowElement.querySelector(".status-select");
       if (status) row.status = status.value;
     });
@@ -2521,9 +2482,22 @@ function createRowElement(section, row, number) {
   rowDragHandle.title = "Перетащить строку";
   rowDragHandle.draggable = !section.statusSort;
   rowDragHandle.hidden = Boolean(section.statusSort);
-  const rowNumber = document.createElement("span");
-  rowNumber.className = "row-number-text";
-  rowNumber.textContent = number;
+  const manual = draft.numberingMode === "manual";
+  const rowNumber = document.createElement(manual ? "input" : "span");
+  rowNumber.className = manual ? "row-number-text row-number-input" : "row-number-text";
+  if (manual) {
+    rowNumber.type = "text";
+    rowNumber.value = number;
+    rowNumber.placeholder = "№";
+    rowNumber.setAttribute("aria-label", `Номер пункта в разделе «${section.title}»`);
+    rowNumber.addEventListener("input", () => {
+      row.manualNumber = ChecklistNumbering.normalizeNumber(rowNumber.value);
+      scheduleSave();
+    });
+    rowNumber.addEventListener("change", () => {
+      saveLocalMutationNow();
+    });
+  } else rowNumber.textContent = number;
   numberCell.append(rowDragHandle, rowNumber);
   tr.append(numberCell);
 
@@ -2870,7 +2844,7 @@ function applyRowAction(section, rowId, action) {
   } else if (action === "insert-below") {
     currentSection.rows.splice(index + 1, 0, createRow(currentSection.columns));
   } else if (action === "duplicate") {
-    currentSection.rows.splice(currentSection.statusSort ? currentSection.rows.length : index + 1, 0, { ...clone(currentSection.rows[index]), id: crypto.randomUUID() });
+    currentSection.rows.splice(currentSection.statusSort ? currentSection.rows.length : index + 1, 0, { ...clone(currentSection.rows[index]), id: crypto.randomUUID(), ...(draft.numberingMode === "manual" ? { manualNumber: "" } : {}) });
   } else if (action === "split") {
     splitSectionAtRow(currentSection, index);
     return;
@@ -3442,6 +3416,7 @@ function parseAdfDocument(documentBody, attachments = []) {
         const cells = tableRow.content || [];
         return {
           id: crypto.randomUUID(),
+          ...(numberIndex >= 0 ? { manualNumber: adfNodeText(cells[numberIndex]).trim() } : {}),
           status: normalizeStatus(statusIndex >= 0 ? adfNodeText(cells[statusIndex]) : ""),
           cells: Object.fromEntries(
             columns.map((column) => [column.id, adfNodeToHtml(cells[column.sourceIndex], attachments)]),
@@ -3494,7 +3469,7 @@ function generateMarkup(options = {}) {
     rows.forEach((row) => {
       const values = section.columns.map((column) => jiraCell(row.cells[column.id] || ""));
       const status = `{color:${STATUS_META[row.status].jiraColor}}*${row.status}*{color}`;
-      lines.push(`|${[rowNumbers.get(row.id), ...values, status].join("|")}|`);
+      lines.push(`|${[jiraCell(escapeHtml(rowNumbers.get(row.id))), ...values, status].join("|")}|`);
     });
     blocks.push(lines.join("\n"));
   });
@@ -3551,7 +3526,7 @@ function generateVisualPreview(sourceDraft = draft, compareDraft = null) {
       const oppositeRow = oppositeRows.get(row.id);
       const rowOnlyHere = Boolean(oppositeDraft && !oppositeRow);
       if (sectionOnlyHere || rowOnlyHere) tr.classList.add("version-diff-row");
-      tr.innerHTML = `<td>${rowNumbers.get(row.id)}</td>${section.columns
+      tr.innerHTML = `<td>${escapeHtml(rowNumbers.get(row.id))}</td>${section.columns
         .map((column) => {
           const oppositeColumn = oppositeColumns.get(column.id);
           const columnOnlyHere = Boolean(oppositeDraft && !oppositeColumn);
@@ -3776,56 +3751,6 @@ function generateAdfDocument(options = {}) {
   return { type: "doc", version: 1, content };
 }
 
-function fillJiraSettingsForm() {
-  elements.jiraTransport.value = jiraSettings.transport || "server";
-  elements.jiraType.value = jiraSettings.type;
-  elements.jiraAuthMethod.value =
-    jiraSettings.authMethod === "basic" || jiraSettings.authMethod === "cookie" ? jiraSettings.authMethod : "pat";
-  elements.jiraBaseUrl.value = jiraSettings.baseUrl;
-  elements.jiraUser.value = jiraSettings.user;
-  elements.jiraToken.value = jiraSecret;
-  fillJiraHeaderForm();
-  updateJiraSettingsLabels();
-}
-
-function updateJiraSettingsLabels() {
-  const agent = elements.jiraTransport.value === "agent";
-  document.getElementById("jiraExtraHeaderFields").hidden = agent;
-  document.getElementById("jiraConnectHeaderHint").hidden = !agent;
-  const cloud = elements.jiraType.value === "cloud";
-  const basic = !cloud && elements.jiraAuthMethod.value === "basic";
-  const cookie = !cloud && elements.jiraAuthMethod.value === "cookie";
-  elements.jiraAuthMethodField.hidden = cloud;
-  elements.jiraUserField.hidden = !cloud && !basic;
-  elements.jiraUserLabel.textContent = cloud ? "Email Atlassian" : "Логин Jira";
-  elements.jiraTokenLabel.textContent = cloud
-    ? "API token"
-    : basic
-      ? "Пароль"
-      : cookie
-        ? "Cookie"
-        : "Personal Access Token";
-  elements.jiraToken.placeholder = cloud
-    ? "API token не сохраняется"
-    : basic
-      ? "Пароль не сохраняется"
-      : cookie
-        ? "Cookie не сохраняется"
-        : "Токен не сохраняется";
-  elements.jiraToken.autocomplete = basic ? "current-password" : "off";
-  elements.jiraUser.placeholder = cloud ? "name@company.ru" : "username";
-}
-
-function readJiraSettingsForm() {
-  return {
-    transport: elements.jiraTransport.value,
-    type: elements.jiraType.value,
-    authMethod: elements.jiraType.value === "cloud" ? "api-token" : elements.jiraAuthMethod.value,
-    baseUrl: elements.jiraBaseUrl.value.trim().replace(/\/+$/, ""),
-    user: elements.jiraUser.value.trim(),
-  };
-}
-
 function validateJiraSettings(settings, token) {
   if (!/^https?:\/\//i.test(settings.baseUrl)) {
     throw new Error("Укажите полный адрес Jira, начиная с http:// или https://");
@@ -3842,11 +3767,6 @@ function validateJiraSettings(settings, token) {
   if (settings.transport !== "agent" && (settings.type === "cloud" || settings.authMethod === "basic") && !settings.user) {
     throw new Error(settings.type === "cloud" ? "Для Jira Cloud укажите email Atlassian" : "Укажите логин Jira");
   }
-}
-
-function setConnectionState(message, type = "") {
-  elements.jiraConnectionState.textContent = message;
-  elements.jiraConnectionState.className = `connection-state ${type}`.trim();
 }
 
 function setStorageConnectionState(message, type = "") {
@@ -3944,7 +3864,7 @@ function saveReportIdentitySettings() {
 }
 
 function setSettingsSection(section) {
-  const selected = ["checklist", "columns", "pinning", "jira", "files", "history"].includes(section) ? section : "checklist";
+  const selected = ["checklist", "columns", "pinning", "files", "history"].includes(section) ? section : "checklist";
   elements.settingsChecklistSectionButton.classList.toggle("group-active", ["checklist", "columns", "pinning"].includes(selected));
   elements.jiraSettingsModal.querySelectorAll("[data-settings-section]").forEach((button) => {
     const active = button.dataset.settingsSection === selected;
@@ -4016,20 +3936,18 @@ function saveChecklistSettings() {
   const mode = ChecklistNumbering.normalizeMode(elements.jiraSettingsModal.querySelector('[name="numberingMode"]:checked')?.value);
   if (draft.numberingMode === mode) return;
   flushDraftFromDom();
-  draft.numberingMode = mode;
+  ChecklistNumbering.setMode(draft, mode);
   renderSections();
   saveLocalMutationNow();
 }
 
 function openJiraSettings() {
-  fillJiraSettingsForm();
   fillStorageSettingsForm();
   fillReportIdentityForm();
   fillChecklistSettingsForm();
   fillPinnedColumnsForm();
   setSettingsSection("checklist");
   setSettingsSavedState(false);
-  setConnectionState("Соединение ещё не проверялось.");
   setStorageConnectionState("Настройки файлового хранилища ещё не сохранялись.");
   setReportIdentityState(
     !cloudHistoryEnabled
@@ -4049,34 +3967,17 @@ function closeJiraSettings() {
 
 function saveJiraSettings() {
   try {
-    const settings = readJiraSettingsForm();
-    const header = readJiraHeaderForm();
-    saveJiraHeader(settings.baseUrl, header);
-    jiraSettings = settings;
-    jiraSecret = elements.jiraToken.value;
-    localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
     saveStorageSettings();
     saveReportIdentitySettings();
     saveDefaultColumnsSettings();
     saveChecklistSettings();
     savePinnedColumns();
-    setConnectionState("Настройки сохранены. Токен, пароль или cookie останутся только до перезагрузки.", "success");
     setStorageConnectionState("Настройки файлов сохранены. Токены останутся только до перезагрузки.", "success");
     setSettingsSavedState(true);
   } catch (error) {
     setSettingsSavedState(false);
     showToast(`Не удалось сохранить настройки: ${error.message}`, 9000);
   }
-}
-
-function setJiraSettingsTab(tab) {
-  const curl = tab === "curl";
-  elements.jiraManualTab.classList.toggle("active", !curl);
-  elements.jiraCurlTab.classList.toggle("active", curl);
-  elements.jiraManualTab.setAttribute("aria-selected", curl ? "false" : "true");
-  elements.jiraCurlTab.setAttribute("aria-selected", curl ? "true" : "false");
-  elements.jiraManualPane.hidden = curl;
-  elements.jiraCurlPane.hidden = !curl;
 }
 
 function tokenizeCurlCommand(value) {
@@ -4268,27 +4169,6 @@ function parseJiraCurl(value) {
     };
   }
   throw new Error("В curl не найден Authorization, -u или Cookie");
-}
-
-function showJiraCurlState(message, type = "") {
-  elements.jiraCurlState.textContent = message;
-  elements.jiraCurlState.className = `settings-curl-state ${type}`.trim();
-  elements.jiraCurlState.hidden = false;
-}
-
-function applyJiraCurlSettings() {
-  try {
-    const parsed = parseJiraCurl(elements.jiraCurlInput.value);
-    jiraSettings = parsed.settings;
-    jiraSecret = parsed.token;
-    localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(jiraSettings));
-    fillJiraSettingsForm();
-    setConnectionState("Настройки из curl сохранены. Секрет останется только до перезагрузки.", "success");
-    showJiraCurlState(`${parsed.summary}: ${jiraSettings.baseUrl}`, "success");
-  } catch (error) {
-    showJiraCurlState(error.message, "error");
-    setConnectionState(error.message, "error");
-  }
 }
 
 function parseIssueUrl(value) {
@@ -4546,24 +4426,6 @@ async function uploadPendingImages(settings, issue, options = {}) {
     onProgress({done:index+1,total:plan.uploads.length,current:attachment.filename});
   }
   return uploaded;
-}
-
-async function testJiraConnection() {
-  try {
-    const settings = readJiraSettingsForm();
-    const token = elements.jiraToken.value;
-    const additionalHeader = readJiraHeaderForm();
-    validateJiraSettings(settings, token);
-    setConnectionState("Проверяем подключение…");
-    const result = await jiraRequest("/api/jira/test", { ...settings, token, additionalHeader });
-    saveJiraHeader(settings.baseUrl, additionalHeader);
-    jiraSettings = settings;
-    jiraSecret = token;
-    localStorage.setItem(JIRA_SETTINGS_KEY, JSON.stringify(settings));
-    setConnectionState(`Подключено: ${result.displayName || result.name || "пользователь Jira"}`, "success");
-  } catch (error) {
-    setConnectionState(error.message, "error");
-  }
 }
 
 function splitWikiComment(comment) {
@@ -6540,6 +6402,7 @@ function resetImportPreview() {
   preparedImport = null; pendingImportedDraft = null; importLocationSelection = new Set();
   elements.importModal.classList.remove("has-import-preview");
   document.getElementById("importSourceSummary").hidden = true;
+  document.getElementById("importNumberingChoice").hidden = true;
   document.getElementById("importTitle").textContent = "Импорт чек-листа из Jira";
   document.getElementById("importAttachmentsHint").textContent = "Изображения и файлы сохранятся в этом браузере";
   document.getElementById("importAttachmentChoices").hidden = true;
@@ -6571,6 +6434,8 @@ function syncImportSelection() {
 
 function renderImportChoices() {
   const referencesOnly = importSource === "markup";
+  document.getElementById("importNumberingChoice").hidden = !ChecklistNumbering.hasSourceNumbers(preparedImport.document);
+  document.getElementById("importPreserveNumbers").checked = true;
   const panel = document.getElementById("importAttachmentChoices");
   const list = document.getElementById("importColumnList"); list.replaceChildren(); panel.hidden = false;
   elements.importModal.classList.add("has-import-preview");
@@ -6729,7 +6594,9 @@ async function applyImport(mode = "replace") {
     setImportProgress("Сохраняем в браузере…");
     elements.importSummary.hidden = true;
     await saveReportSnapshot("before-import");
+    ChecklistNumbering.configureImport(imported, document.getElementById("importPreserveNumbers").checked, draft.numberingMode);
     if (mode === "append") {
+      if (imported.numberingMode === "manual") ChecklistNumbering.setMode(draft, "manual");
       draft.sections.push(...clone(imported.sections));
       if (imported.intro) draft.intro += imported.intro;
     } else {
@@ -6752,8 +6619,22 @@ async function applyImport(mode = "replace") {
   }
 }
 
+async function chooseImportedNumbering(imported) {
+  let preserve = true;
+  if (ChecklistNumbering.hasSourceNumbers(imported)) {
+    const choice = await askConfirmation("Сохранить номера из исходного чек-листа для ретеста? Их можно будет редактировать вручную, удаление строк не изменит остальные номера.", {
+      title: "Нумерация импортируемых пунктов", confirmText: "Сохранить номера", alternativeText: "Пересчитать",
+    });
+    if (choice === false) return false;
+    preserve = choice === true;
+  }
+  ChecklistNumbering.configureImport(imported, preserve, draft.numberingMode);
+  return true;
+}
+
 async function applyImportedChecklist(imported, metadata = {}) {
   if (!await confirmImportReplacement()) return false;
+  if (!await chooseImportedNumbering(imported)) return false;
   await saveReportSnapshot("before-inbound-import");
   const nextDraft = importedDraftInCurrentReport(imported);
   const title = String(metadata.title || "").trim();
@@ -6829,6 +6710,7 @@ async function copyPreviewMarkup() {
 async function savePreviewMarkupToDraft() {
   try {
     const imported = parseJiraMarkup(elements.markupPreview.value, collectCurrentAttachments());
+    ChecklistNumbering.configureImport(imported, draft.numberingMode === "manual", draft.numberingMode);
     await saveReportSnapshot("before-preview-markup-save");
     draft = normalizeDraft({
       ...imported,
@@ -7480,6 +7362,8 @@ function askConfirmation(message, options = {}) {
   elements.confirmModalTitle.textContent = options.title || "Подтвердите действие";
   elements.confirmModalMessage.textContent = message;
   elements.acceptConfirmButton.textContent = options.confirmText || "Подтвердить";
+  elements.alternativeConfirmButton.hidden = !options.alternativeText;
+  elements.alternativeConfirmButton.textContent = options.alternativeText || "";
   elements.acceptConfirmButton.className =
     `button ${options.danger ? "button-danger" : "button-primary"}`;
   elements.confirmModal.hidden = false;
@@ -8186,6 +8070,7 @@ elements.closeMediaViewerButton.addEventListener("click", closeMediaViewer);
 elements.closeCodeEditorButton.addEventListener("click", () => closeCodeEditor());
 elements.saveCodeButton.addEventListener("click", saveCodeChanges);
 elements.acceptConfirmButton.addEventListener("click", () => resolveConfirmation(true));
+elements.alternativeConfirmButton.addEventListener("click", () => resolveConfirmation("alternative"));
 elements.cancelConfirmButton.addEventListener("click", () => resolveConfirmation(false));
 elements.closeConfirmButton.addEventListener("click", () => resolveConfirmation(false));
 elements.codeEditorTextarea.addEventListener("input", () => {
@@ -8309,9 +8194,6 @@ elements.focusExitButton.addEventListener("click", () => setFocusMode(false));
 elements.settingsButton.addEventListener("click", openJiraSettings);
 elements.closeJiraSettingsButton.addEventListener("click", closeJiraSettings);
 elements.saveJiraSettingsButton.addEventListener("click", saveJiraSettings);
-elements.testJiraButton.addEventListener("click", testJiraConnection);
-elements.jiraBaseUrl.addEventListener("change", fillJiraHeaderForm);
-elements.jiraTransport.addEventListener("change", updateJiraSettingsLabels);
 elements.publishButton.addEventListener("click", publishToJira);
 elements.publishCancelButton.addEventListener("click", cancelPublishProgress);
 document.getElementById("publishStatusSelectAll").addEventListener("change", (event) => {
@@ -8339,22 +8221,16 @@ elements.saveVersionChoiceButton.addEventListener("click", () => {
 });
 elements.openLocalCopyButton.addEventListener("click", () => openSavedConflictCopy("local"));
 elements.openCloudCopyButton.addEventListener("click", () => openSavedConflictCopy("cloud"));
-elements.jiraType.addEventListener("change", updateJiraSettingsLabels);
-elements.jiraAuthMethod.addEventListener("change", updateJiraSettingsLabels);
 document.querySelectorAll('.settings-subnav [data-settings-section]').forEach((button) => {
   button.addEventListener("click", () => setSettingsSection(button.dataset.settingsSection));
 });
 elements.settingsChecklistSectionButton.addEventListener("click", () => setSettingsSection("checklist"));
-elements.settingsJiraSectionButton.addEventListener("click", () => setSettingsSection("jira"));
 elements.settingsFilesSectionButton.addEventListener("click", () => setSettingsSection("files"));
 elements.settingsHistorySectionButton.addEventListener("click", () => setSettingsSection("history"));
 elements.jiraSettingsModal.addEventListener("input", markSettingsDirty);
 elements.jiraSettingsModal.addEventListener("change", markSettingsDirty);
 elements.cloudHistoryEnabled.addEventListener("change", () => updateCloudHistorySettingsState());
 elements.reportWorkspaceKey.addEventListener("input", () => updateCloudHistorySettingsState());
-elements.jiraManualTab.addEventListener("click", () => setJiraSettingsTab("manual"));
-elements.jiraCurlTab.addEventListener("click", () => setJiraSettingsTab("curl"));
-elements.parseJiraCurlButton.addEventListener("click", applyJiraCurlSettings);
 elements.themeToggle.addEventListener("click", (e) => {
   e.stopPropagation();
   const menu = document.getElementById("themeMenu");

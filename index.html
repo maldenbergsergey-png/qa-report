@@ -10,7 +10,7 @@
     <link rel="apple-touch-icon" href="/icons/icon-192.png?v=2" />
     <script src="/pwa.js?v=2" defer></script>
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=99" />
+    <link rel="stylesheet" href="/styles.css?v=100" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -558,6 +558,10 @@
             <input id="importWithAttachments" type="checkbox" checked aria-describedby="importAttachmentsHint" />
             <span class="import-option-copy"><strong>Скачать вложения в браузер</strong><small id="importAttachmentsHint">Изображения и файлы сохранятся в этом браузере</small></span>
           </label>
+          <label class="local-import-option" id="importNumberingChoice" hidden>
+            <input id="importPreserveNumbers" type="checkbox" checked aria-describedby="importNumberingHint" />
+            <span class="import-option-copy"><strong>Сохранить исходную нумерацию</strong><small id="importNumberingHint">Включится ручная нумерация: номера можно редактировать, удаление строк их не изменит. Снимите флажок, чтобы пересчитать номера автоматически.</small></span>
+          </label>
           <section class="import-attachment-choices" id="importAttachmentChoices" aria-label="Выбор вложений по колонкам" hidden>
             <div class="import-choices-heading"><strong id="importChoicesTitle">Вложения по колонкам</strong><span id="importSelectionCount"></span></div>
             <div id="importColumnList"></div>
@@ -684,6 +688,7 @@
         <div class="confirm-modal-body" id="confirmModalMessage"></div>
         <footer class="modal-footer">
           <button class="button button-ghost" id="cancelConfirmButton" type="button">Отмена</button>
+          <button class="button button-secondary" id="alternativeConfirmButton" type="button" hidden>Пересчитать</button>
           <button class="button button-primary" id="acceptConfirmButton" type="button">Подтвердить</button>
         </footer>
       </section>
@@ -757,10 +762,6 @@
               <button class="settings-nav-item" type="button" data-settings-section="columns">Столбцы</button>
               <button class="settings-nav-item" type="button" data-settings-section="pinning">Закрепление столбцов</button>
             </div>
-            <button class="settings-nav-item" id="settingsJiraSectionButton" type="button" data-settings-section="jira">
-              <svg class="ui-icon" aria-hidden="true"><use href="#icon-send"></use></svg>
-              <span>Jira</span>
-            </button>
             <button class="settings-nav-item" id="settingsFilesSectionButton" type="button" data-settings-section="files">
               <svg class="ui-icon" aria-hidden="true"><use href="#icon-paperclip"></use></svg>
               <span>Файлы</span>
@@ -774,7 +775,7 @@
             <section class="settings-section active" id="settingsChecklistSection" data-settings-panel="checklist">
               <fieldset class="numbering-settings">
                 <legend>Нумерация пунктов</legend>
-                <p class="settings-note">Настройка применяется к текущему чек-листу и сохраняется вместе с ним. Номера автоматически обновляются при изменении порядка разделов и строк.</p>
+                <p class="settings-note">Настройка применяется к текущему чек-листу и сохраняется вместе с ним. В автоматических режимах номера обновляются при изменении порядка разделов и строк.</p>
                 <label class="settings-toggle-card numbering-option">
                   <input type="radio" name="numberingMode" value="section" checked />
                   <span><strong>В каждом разделе с 1</strong><small>Каждый раздел начинается заново.</small><span class="numbering-example">Раздел 1: 1, 2, 3 · Раздел 2: 1, 2, 3</span></span>
@@ -786,6 +787,10 @@
                 <label class="settings-toggle-card numbering-option">
                   <input type="radio" name="numberingMode" value="hierarchical" />
                   <span><strong>По номеру раздела и пункта</strong><small>Сначала номер раздела, затем номер пункта через точку.</small><span class="numbering-example">Раздел 1: 1.1, 1.2, 1.3 · Раздел 2: 2.1, 2.2, 2.3</span></span>
+                </label>
+                <label class="settings-toggle-card numbering-option">
+                  <input type="radio" name="numberingMode" value="manual" />
+                  <span><strong>Вручную — для ретеста</strong><small>Текущие номера сохранятся. Редактируйте их прямо в таблице: удаление и перенос строк не изменят остальные номера. Для новых строк задайте номер вручную.</small><span class="numbering-example">После удаления пункта 4: 1, 2, 3, 5</span></span>
                 </label>
               </fieldset>
             </section>
@@ -819,72 +824,6 @@
                 </label>
                 <p class="pinning-hint">Можно включить оба варианта: остальные столбцы будут прокручиваться между номером и статусом.</p>
               </fieldset>
-            </section>
-            <section class="settings-section" id="settingsJiraSection" data-settings-panel="jira" hidden>
-              <label class="field"><span>Подключение</span><select id="jiraTransport"><option value="server">Через сервер QA Report</option><option value="agent">Через QA Report Connect</option></select></label>
-              <div class="settings-note">
-                Токен, пароль или cookie хранятся только в памяти открытой вкладки и исчезают после перезагрузки. Остальные настройки сохраняются локально в браузере.
-              </div>
-              <div class="settings-tabs" role="tablist" aria-label="Способ настройки Jira">
-                <button class="settings-tab active" id="jiraManualTab" data-jira-settings-tab="manual" type="button" role="tab" aria-selected="true" aria-controls="jiraManualPane">Вручную</button>
-                <button class="settings-tab" id="jiraCurlTab" data-jira-settings-tab="curl" type="button" role="tab" aria-selected="false" aria-controls="jiraCurlPane">Из curl</button>
-              </div>
-              <div class="settings-pane" id="jiraManualPane" role="tabpanel" aria-labelledby="jiraManualTab">
-                <label class="field">
-                  <span>Тип Jira</span>
-                  <select id="jiraType">
-                    <option value="data-center">Data Center / Server</option>
-                    <option value="cloud">Cloud</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>Адрес Jira</span>
-                  <input id="jiraBaseUrl" type="url" placeholder="https://jira.company.ru" />
-                </label>
-                <label class="field" id="jiraAuthMethodField">
-                  <span>Способ авторизации</span>
-                  <select id="jiraAuthMethod">
-                    <option value="pat">Personal Access Token</option>
-                    <option value="basic">Логин и пароль</option>
-                    <option value="cookie">Cookie из curl</option>
-                  </select>
-                </label>
-                <label class="field" id="jiraUserField">
-                  <span id="jiraUserLabel">Имя пользователя</span>
-                  <input id="jiraUser" type="text" autocomplete="username" placeholder="username" />
-                </label>
-                <label class="field">
-                  <span id="jiraTokenLabel">Personal Access Token</span>
-                  <input id="jiraToken" type="password" autocomplete="off" placeholder="Токен не сохраняется" />
-                </label>
-              </div>
-              <div class="settings-pane" id="jiraCurlPane" role="tabpanel" aria-labelledby="jiraCurlTab" hidden>
-                <label class="field">
-                  <span>curl-запрос из Jira</span>
-                  <textarea id="jiraCurlInput" class="settings-curl-input" spellcheck="false" placeholder="curl 'https://jira.company.ru/rest/api/2/issue/QA-123/comment' -H 'Authorization: Bearer ...'"></textarea>
-                </label>
-                <p class="settings-curl-hint">
-                  Можно вставить curl с Bearer, Basic, -u user:password или Cookie. Секрет из curl будет применён только в текущей вкладке.
-                </p>
-                <div class="settings-curl-state" id="jiraCurlState" hidden></div>
-                <button class="button button-secondary" id="parseJiraCurlButton" type="button">
-                  Разобрать и сохранить
-                </button>
-              </div>
-              <fieldset class="jira-extra-header" id="jiraExtraHeaderFields">
-                <legend>Дополнительный заголовок · необязательно</legend>
-                <p class="settings-curl-hint">Если ИБ выдала заголовок для доступа к Jira, укажите его имя и значение. Они сохранятся в этом браузере для указанного адреса Jira.</p>
-                <label class="field"><span>Имя заголовка</span><input id="jiraHeaderName" maxlength="128" autocomplete="off" spellcheck="false" placeholder="X-Jira-Access" /></label>
-                <label class="field"><span>Значение</span><input id="jiraHeaderValue" type="password" maxlength="4096" autocomplete="off" placeholder="Значение от ИБ" /></label>
-                <p class="settings-curl-hint">Значение хранится локально вместе с настройкой. Очистите оба поля и сохраните настройки, чтобы удалить заголовок.</p>
-              </fieldset>
-              <p class="settings-curl-hint" id="jiraConnectHeaderHint" hidden>Дополнительный заголовок для этого подключения настраивается в QA Report Connect: «Изменить» у нужной Jira.</p>
-              <div class="settings-section-actions">
-                <button class="button button-secondary" id="testJiraButton" type="button">
-                  Проверить подключение
-                </button>
-                <div class="connection-state" id="jiraConnectionState">Соединение ещё не проверялось.</div>
-              </div>
             </section>
             <section class="settings-section" id="settingsFilesSection" data-settings-panel="files" hidden>
               <div class="settings-note">
@@ -1180,16 +1119,16 @@ cd .\qa-report-agent
       </section>
     </template>
 
-    <script src="/jira-markup-import.js?v=7"></script>
+    <script src="/jira-markup-import.js?v=8"></script>
     <script src="/checklist-selection.js?v=2"></script>
     <script src="/checklist-table.js?v=2"></script>
-    <script src="/checklist-numbering.js?v=2"></script>
-    <script src="/release-notes.js?v=23"></script>
+    <script src="/checklist-numbering.js?v=3"></script>
+    <script src="/release-notes.js?v=24"></script>
     <script src="/jira-attachment-reuse.js?v=1"></script>
     <script src="/attachment-limits.js?v=1"></script>
     <script src="/attachment-import.js?v=4"></script>
     <script src="/agent/jira-headers.js?v=1"></script>
-    <script src="/app.js?v=106"></script>
+    <script src="/app.js?v=107"></script>
     <script src="/local-import-client.js?v=3"></script>
   </body>
 </html>
